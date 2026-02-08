@@ -10,10 +10,10 @@ TOKEN = os.getenv("TOKEN")  # Stored safely in Railway variables
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Grid-style buttons with hidden links
     keyboard = [
-        [InlineKeyboardButton("📌 Waifus", url="https://t.me/proaid"),
-         InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/QuickAid")],
-        [InlineKeyboardButton("📌 Arc Comics", url="https://t.me/ArcComic"),
-         InlineKeyboardButton("💡 ExpertAid Community", url="https://t.me/ExpertAid")]
+        [InlineKeyboardButton("📌 Waifus", url="https://t.me/+8jDIgoFZY98yNDE1"),
+         InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/+MjgFpHIjrZgxZTg9")],
+        [InlineKeyboardButton("📌 Arc Comics", url="https://t.me/+VG9pG6hW78E2NWU1"),
+         InlineKeyboardButton("💡 ExpertAid Community", url="https://t.me/+CgMQndxJB1hlYmNl")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
