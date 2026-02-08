@@ -5,10 +5,24 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 TOKEN = os.getenv("TOKEN")  # Stored safely in Railway variables
 
 # --------------------------
-# /start handler (polished professional welcome)
+# /start handler (with deep link support)
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Grid-style buttons with hidden links
+    # ✅ Check if user clicked a deep link with a code
+    if context.args:
+        code = context.args[0]
+        if code.isdigit():
+            url = f"https://nhentai.net/g/{code}/"
+            keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                "🔎 Your comic is ready! Make sure to join our channels @QuickAid @ArcComic @proaid",
+                reply_markup=reply_markup
+            )
+            return  # Exit the function so welcome message is skipped
+
+    # 👇 Normal welcome message if no deep link
     keyboard = [
         [InlineKeyboardButton("📌 Waifus", url="https://t.me/+8jDIgoFZY98yNDE1"),
          InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/+MjgFpHIjrZgxZTg9")],
@@ -17,7 +31,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Clean and professional welcome message
     message = (
         "👋 *Welcome to Arc Comics Bot!*\n\n"
         "_Your gateway to the hottest comics & community_\n\n"
@@ -43,9 +56,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if code.isdigit():
         url = f"https://nhentai.net/g/{code}/"
 
-        keyboard = [
-            [InlineKeyboardButton("📖 Open Comic", url=url)]
-        ]
+        keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
