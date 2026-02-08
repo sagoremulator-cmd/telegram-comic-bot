@@ -16,8 +16,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
+            # Message without the code, only a button
             await update.message.reply_text(
-                "🔎 Your comic is ready! Make sure to join our channels @QuickAid @ArcComic @proaid",
+                "🔎 Click the button to open your comic!",
                 reply_markup=reply_markup
             )
             return  # Exit the function so welcome message is skipped
@@ -59,8 +60,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # Message without showing the code
         await update.message.reply_text(
-            "🔎 Your comic is ready! Make sure to join our channels @QuickAid @ArcComic @proaid",
+            "🔎 Click the button to open your comic!",
             reply_markup=reply_markup
         )
     else:
