@@ -5,7 +5,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 TOKEN = os.getenv("TOKEN")  # Stored safely in Railway variables
 
 # --------------------------
-# /start handler (with deep link support)
+# /start handler (with deep link & protection)
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ Check if user clicked a deep link with a code
@@ -16,10 +16,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # Message without the code, only a button
+            # Message with protection
             await update.message.reply_text(
                 "🔎 Click the button to open your comic!",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                protect_content=True  # Protect from forwarding/copying
             )
             return  # Exit the function so welcome message is skipped
 
@@ -45,11 +46,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         message,
         reply_markup=reply_markup,
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        protect_content=True  # Protect welcome message
     )
 
 # --------------------------
-# Message handler (code → link)
+# Message handler (code → link with protection)
 # --------------------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
@@ -60,13 +62,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Message without showing the code
+        # Message with protection
         await update.message.reply_text(
             "🔎 Click the button to open your comic!",
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            protect_content=True  # Protect comic link message
         )
     else:
-        await update.message.reply_text("❌ Send only the comic code (numbers).")
+        await update.message.reply_text(
+            "❌ Send only the comic code (numbers).",
+            protect_content=True  # Protect error messages
+        )
 
 # --------------------------
 # Build app and add handlers
