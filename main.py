@@ -5,26 +5,10 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 TOKEN = os.getenv("TOKEN")  # Stored safely in Railway variables
 
 # --------------------------
-# /start handler (with deep link & protection)
+# /start handler (polished professional welcome)
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ Check if user clicked a deep link with a code
-    if context.args:
-        code = context.args[0]
-        if code.isdigit():
-            url = f"https://nhentai.net/g/{code}/"
-            keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            # Message with protection
-            await update.message.reply_text(
-                "🔎 Click the button to open your comic!",
-                reply_markup=reply_markup,
-                protect_content=True  # Protect from forwarding/copying
-            )
-            return  # Exit the function so welcome message is skipped
-
-    # 👇 Normal welcome message if no deep link
+    # Grid-style buttons with hidden links
     keyboard = [
         [InlineKeyboardButton("📌 Waifus", url="https://t.me/+8jDIgoFZY98yNDE1"),
          InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/+MjgFpHIjrZgxZTg9")],
@@ -33,6 +17,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    # Clean and professional welcome message
     message = (
         "👋 *Welcome to Arc Comics Bot!*\n\n"
         "_Your gateway to the hottest comics & community_\n\n"
@@ -46,12 +31,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         message,
         reply_markup=reply_markup,
-        parse_mode="Markdown",
-        protect_content=True  # Protect welcome message
+        parse_mode="Markdown"
     )
 
 # --------------------------
-# Message handler (code → link with protection)
+# Message handler (code → link)
 # --------------------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
@@ -59,20 +43,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if code.isdigit():
         url = f"https://nhentai.net/g/{code}/"
 
-        keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
+        keyboard = [
+            [InlineKeyboardButton("📖 Open Comic", url=url)]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Message with protection
         await update.message.reply_text(
-            "🔎 Click the button to open your comic!",
-            reply_markup=reply_markup,
-            protect_content=True  # Protect comic link message
+            "🔎 Your comic is ready! Make sure to join our channels @QuickAid @ArcComic @proaid",
+            reply_markup=reply_markup
         )
     else:
-        await update.message.reply_text(
-            "❌ Send only the comic code (numbers).",
-            protect_content=True  # Protect error messages
-        )
+        await update.message.reply_text("❌ Send only the comic code (numbers).")
 
 # --------------------------
 # Build app and add handlers
