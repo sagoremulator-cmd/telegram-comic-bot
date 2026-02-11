@@ -4,8 +4,6 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes
 )
-from fastapi import FastAPI
-import uvicorn
 
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
@@ -160,7 +158,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # --------------------------
-# Build bot app
+# Build app
 # --------------------------
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
@@ -170,16 +168,7 @@ app.add_handler(CommandHandler("broadcast", broadcast))
 app.add_handler(CommandHandler("stats", stats))
 
 # --------------------------
-# FastAPI health check
-# --------------------------
-fastapi_app = FastAPI()
-
-@fastapi_app.get("/health")
-def health():
-    return {"status": "ok"}
-
-# --------------------------
-# Run webhook + health check
+# Run webhook
 # --------------------------
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
@@ -187,6 +176,5 @@ if __name__ == "__main__":
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
-        webhook_url=webhook_url,
-        web_app=fastapi_app   # attach FastAPI app for /health
+        webhook_url=webhook_url
     )
