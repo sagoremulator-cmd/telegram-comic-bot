@@ -1,74 +1,114 @@
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 TOKEN = os.getenv("TOKEN")
-PORT = int(os.environ.get("PORT", 5000))  # Render gives you a port automatically
+PORT = int(os.environ.get("PORT", 5000))
+
+# List of mandatory channels (usernames without @)
+REQUIRED_CHANNELS = ["WaifusChannel", "QuickAidComics", "ArcComics", "ExpertAidCommunity"]
+
+# --------------------------
+# Check if user is subscribed to all channels
+# --------------------------
+async def is_subscribed(bot, user_id):
+    for channel in REQUIRED_CHANNELS:
+        try:
+            member = await bot.get_chat_member(f"@{channel}", user_id)
+            if member.status not in ["member", "administrator", "creator"]:
+                return False
+        except:
+            return False
+    return True
 
 # --------------------------
 # /start handler
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # If user gave a deep link argument
-    if context.args and len(context.args) > 0:
-        code = context.args[0]
-        if code.isdigit():
-            url = f"https://nhentai.net/g/{code}/"
-            keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+    user_id = update.effective_user.id
 
-            await update.message.reply_text(
-                "🔎 Click the button to open your comic!",
-                reply_markup=reply_markup,
-                protect_content=True
-            )
-            return  # exit after sending comic link
+    if not await is_subscribed(context.bot, user_id):
+        keyboard = [
+            [InlineKeyboardButton("📌 Waifus", url="https://t.me/WaifusChannel")],
+            [InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/QuickAidComics")],
+            [InlineKeyboardButton("📌 Arc Comics", url="https://t.me/ArcComics")],
+            [InlineKeyboardButton("💡 ExpertAid Community", url="https://t.me/ExpertAidCommunity")],
+            [InlineKeyboardButton("✅ I Joined", callback_data="joined")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Always show welcome message if no valid code
-    keyboard = [
-        [InlineKeyboardButton("📌 Waifus", url="https://t.me/+8jDIgoFZY98yNDE1"),
-         InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/+MjgFpHIjrZgxZTg9")],
-        [InlineKeyboardButton("📌 Arc Comics", url="https://t.me/+VG9pG6hW78E2NWU1"),
-         InlineKeyboardButton("💡 ExpertAid Community", url="https://t.me/+CgMQndxJB1hlYmNl")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "👋 *Welcome to Arc Comics Bot!*\n\n"
+            "To unlock features, you must join all required channels below.\n\n"
+            "After joining, click *✅ I Joined* to verify.",
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+            protect_content=True
+        )
+        return
 
+    # Already subscribed → show instructions
+    await send_instructions(update)
+
+# --------------------------
+# Instructions message
+# --------------------------
+async def send_instructions(update: Update):
     message = (
-        "👋 *Welcome to Arc Comics Bot!*\n\n"
-        "_Your gateway to the hottest comics & community_\n\n"
+        "✨ *Arc Comics Bot Activated!* ✨\n\n"
+        "I instantly turn your comic codes into clickable links.\n\n"
         "📌 *How to use me:* \n"
         "1️⃣ Send any comic code (numbers only)\n"
-        "2️⃣ I’ll reply with a clickable button linking your comic\n"
+        "2️⃣ I’ll reply with a secure button linking your comic\n"
         "3️⃣ Tap the button to read instantly!\n\n"
-        "✨ *Enjoy your comics safely & responsibly!*"
+        "⚡ Professional. Fast. Reliable."
     )
-
-    await update.message.reply_text(
-        message,
-        reply_markup=reply_markup,
-        parse_mode="Markdown",
-        protect_content=True
-    )
+    if update.message:
+        await update.message.reply_text(message, parse_mode="Markdown", protect_content=True)
+    else:
+        await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=True)
 
 # --------------------------
-# Message handler
+# Handle 'Joined' button
+# --------------------------
+async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if await is_subscribed(context.bot, user_id):
+        await query.message.delete()
+        await query.message.reply_text("✅ Subscription verified successfully!")
+        await send_instructions(update)
+    else:
+        await query.answer("❌ You must join all channels first.", show_alert=True)
+
+# --------------------------
+# Comic code handler
 # --------------------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    code = update.message.text.strip()
+    user_id = update.effective_user.id
 
+    # Block usage if unsubscribed
+    if not await is_subscribed(context.bot, user_id):
+        await update.message.reply_text(
+            "❌ Access denied.\n\nYou must remain subscribed to all channels.\nUse /start to verify again."
+        )
+        return
+
+    code = update.message.text.strip()
     if code.isdigit():
         url = f"https://nhentai.net/g/{code}/"
         keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            "🔎 Click the button to open your comic!",
+            "🔎 Your comic link is ready:",
             reply_markup=reply_markup,
             protect_content=True
         )
     else:
         await update.message.reply_text(
-            "❌ Send only the comic code (numbers).",
+            "⚠️ Please send only the comic code (numbers).",
             protect_content=True
         )
 
@@ -77,10 +117,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --------------------------
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # --------------------------
-# Run webhook directly
+# Run webhook
 # --------------------------
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
