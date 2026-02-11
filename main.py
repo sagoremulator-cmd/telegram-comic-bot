@@ -5,8 +5,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Cal
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
-# Public usernames for membership check (bot must be admin here)
-REQUIRED_CHANNELS = ["WaifusChannel", "QuickAidComics", "ArcComics", "ExpertAidCommunity"]
+# Public usernames for membership check (bot must be admin in these)
+REQUIRED_CHANNELS = ["proaid", "QuickAid", "ArcComic", "ExpertAid"]
 
 # Invite links for buttons (your tracking links)
 CHANNEL_LINKS = {
@@ -17,7 +17,7 @@ CHANNEL_LINKS = {
 }
 
 # --------------------------
-# Check if user is subscribed to all channels
+# Check if user is subscribed
 # --------------------------
 async def is_subscribed(bot, user_id):
     for channel in REQUIRED_CHANNELS:
@@ -55,7 +55,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Already subscribed → show instructions
     await send_instructions(update)
 
 # --------------------------
@@ -96,7 +95,6 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Block usage if unsubscribed
     if not await is_subscribed(context.bot, user_id):
         await update.message.reply_text(
             "❌ Access denied.\n\nYou must remain subscribed to all channels.\nUse /start to verify again."
