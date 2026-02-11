@@ -1,10 +1,12 @@
 import os
 import time
+import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes
 )
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
@@ -47,9 +49,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     USERS.add(user_id)
 
-    # If user is not subscribed, show mandatory join buttons
     if not await is_subscribed(context.bot, user_id):
-        # If deep-link argument exists, store it with timestamp
         if context.args:
             PENDING_CODES[user_id] = {"code": context.args[0].strip(), "time": time.time()}
 
@@ -72,7 +72,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ✅ If subscribed and deep-link argument exists
     if context.args:
         code = context.args[0].strip()
         if code.isdigit():
@@ -87,7 +86,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # If no argument, show instructions
     await send_instructions(update)
 
 # --------------------------
@@ -119,10 +117,9 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
         await query.message.reply_text("✅ Subscription verified successfully!")
 
-        # If user had a pending deep-link code, unlock it now (check expiry)
         if user_id in PENDING_CODES:
             data = PENDING_CODES.pop(user_id)
-            if time.time() - data["time"] <= 86400:  # 24 hours
+            if time.time() - data["time"] <= 86400:
                 code = data["code"]
                 if code.isdigit():
                     url = f"https://nhentai.net/g/{code}/"
@@ -201,6 +198,42 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # --------------------------
+# Auto random post forward every 24h
+# --------------------------
+async def send_random_post(app):
+    channels = ["proaid", "ArcComic", "QuickAid"]
+    channel = random.choice(channels)
+
+    messages = []
+    async for msg in app.bot.get_chat_history(f"@{channel}", limit=30):
+        messages.append(msg)
+
+    if not messages:
+        return
+
+    chosen = random.choice(messages)
+
+    for user in list(USERS):
+        try:
+            await app.bot.send_message(
+                chat_id=user,
+                text="✨ *Here’s a highlight from our channels — don’t miss it!* ✨",
+                parse_mode="Markdown"
+            )
+            await app.bot.forward_message(
+                chat_id=user,
+                from_chat_id=chosen.chat.id,
+                message_id=chosen.message_id
+            )
+        except:
+            USERS.remove(user)
+
+def setup_scheduler(app):
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(send_random_post, "interval", hours=24, args=[app])
+    scheduler.start()
+
+# --------------------------
 # Build app
 # --------------------------
 app = ApplicationBuilder().token(TOKEN).build()
@@ -215,9 +248,10 @@ app.add_handler(CommandHandler("stats", stats))
 # --------------------------
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    setup_scheduler(app)   # start the 24h auto job
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-    )
+        )
