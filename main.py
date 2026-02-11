@@ -1,4 +1,5 @@
 import os
+import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -24,6 +25,7 @@ CHANNEL_LINKS = {
 
 # Track users
 USERS = set()
+PENDING_CODES = {}  # {user_id: {"code": "349536", "time": 1739300000}}
 
 # --------------------------
 # Check if user is subscribed
@@ -39,13 +41,18 @@ async def is_subscribed(bot, user_id):
     return True
 
 # --------------------------
-# /start handler
+# /start handler (deep-link + mandatory check + expiry)
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     USERS.add(user_id)
 
+    # If user is not subscribed, show mandatory join buttons
     if not await is_subscribed(context.bot, user_id):
+        # If deep-link argument exists, store it with timestamp
+        if context.args:
+            PENDING_CODES[user_id] = {"code": context.args[0].strip(), "time": time.time()}
+
         keyboard = [
             [InlineKeyboardButton("📌 Waifus", url=CHANNEL_LINKS["Waifus"])],
             [InlineKeyboardButton("📌 QuickAid Comics", url=CHANNEL_LINKS["QuickAid Comics"])],
@@ -65,6 +72,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ✅ If subscribed and deep-link argument exists
+    if context.args:
+        code = context.args[0].strip()
+        if code.isdigit():
+            url = f"https://nhentai.net/g/{code}/"
+            keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                "🔎 Your comic link is ready:",
+                reply_markup=reply_markup,
+                protect_content=True
+            )
+            return
+
+    # If no argument, show instructions
     await send_instructions(update)
 
 # --------------------------
@@ -95,6 +118,26 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_subscribed(context.bot, user_id):
         await query.message.delete()
         await query.message.reply_text("✅ Subscription verified successfully!")
+
+        # If user had a pending deep-link code, unlock it now (check expiry)
+        if user_id in PENDING_CODES:
+            data = PENDING_CODES.pop(user_id)
+            if time.time() - data["time"] <= 86400:  # 24 hours
+                code = data["code"]
+                if code.isdigit():
+                    url = f"https://nhentai.net/g/{code}/"
+                    keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await query.message.reply_text(
+                        "🔎 Your comic link is ready:",
+                        reply_markup=reply_markup,
+                        protect_content=True
+                    )
+                    return
+            else:
+                await query.message.reply_text("⚠️ Your deep-link code expired (24h limit). Please restart with a new link.")
+
         await send_instructions(update)
     else:
         await query.answer("❌ You must join all channels first.", show_alert=True)
