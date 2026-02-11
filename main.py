@@ -9,7 +9,8 @@ PORT = int(os.environ.get("PORT", 5000))  # Render gives you a port automaticall
 # /start handler
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
+    # If user gave a deep link argument
+    if context.args and len(context.args) > 0:
         code = context.args[0]
         if code.isdigit():
             url = f"https://nhentai.net/g/{code}/"
@@ -21,8 +22,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 protect_content=True
             )
-            return
+            return  # exit after sending comic link
 
+    # Always show welcome message if no valid code
     keyboard = [
         [InlineKeyboardButton("📌 Waifus", url="https://t.me/+8jDIgoFZY98yNDE1"),
          InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/+MjgFpHIjrZgxZTg9")],
@@ -32,7 +34,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     message = (
-        "👋 *Welcome to Arc Comics BotYour gateway to the hottest comics & community_\n\n"
+        "👋 *Welcome to Arc Comics Bot!*\n\n"
+        "_Your gateway to the hottest comics & community_\n\n"
         "📌 *How to use me:* \n"
         "1️⃣ Send any comic code (numbers only)\n"
         "2️⃣ I’ll reply with a clickable button linking your comic\n"
