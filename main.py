@@ -1,7 +1,5 @@
 import os
 import time
-import random
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -17,7 +15,7 @@ ADMIN_IDS = {5083713667, 7020245048}
 # Public usernames for membership check
 REQUIRED_CHANNELS = ["proaid", "QuickAid", "ArcComic", "ExpertAid"]
 
-# Invite links for buttons
+# Invite links for buttons (tracking links)
 CHANNEL_LINKS = {
     "Waifus": "https://t.me/+8jDIgoFZY98yNDE1",
     "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
@@ -43,13 +41,15 @@ async def is_subscribed(bot, user_id):
     return True
 
 # --------------------------
-# /start handler
+# /start handler (deep-link + mandatory check + expiry)
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     USERS.add(user_id)
 
+    # If user is not subscribed, show mandatory join buttons
     if not await is_subscribed(context.bot, user_id):
+        # If deep-link argument exists, store it with timestamp
         if context.args:
             PENDING_CODES[user_id] = {"code": context.args[0].strip(), "time": time.time()}
 
@@ -72,6 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ✅ If subscribed and deep-link argument exists
     if context.args:
         code = context.args[0].strip()
         if code.isdigit():
@@ -86,10 +87,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+    # If no argument, show instructions
     await send_instructions(update)
 
 # --------------------------
-# Instructions
+# Instructions message
 # --------------------------
 async def send_instructions(update: Update):
     message = (
@@ -117,9 +119,10 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
         await query.message.reply_text("✅ Subscription verified successfully!")
 
+        # If user had a pending deep-link code, unlock it now (check expiry)
         if user_id in PENDING_CODES:
             data = PENDING_CODES.pop(user_id)
-            if time.time() - data["time"] <= 86400:
+            if time.time() - data["time"] <= 86400:  # 24 hours
                 code = data["code"]
                 if code.isdigit():
                     url = f"https://nhentai.net/g/{code}/"
@@ -198,42 +201,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # --------------------------
-# Auto random post forward every 24h
-# --------------------------
-async def send_random_post(app):
-    channels = ["proaid", "ArcComic", "QuickAid"]
-    channel = random.choice(channels)
-
-    messages = []
-    async for msg in app.bot.get_chat_history(f"@{channel}", limit=30):
-        messages.append(msg)
-
-    if not messages:
-        return
-
-    chosen = random.choice(messages)
-
-    for user in list(USERS):
-        try:
-            await app.bot.send_message(
-                chat_id=user,
-                text="✨ *Here’s a highlight from our channels — don’t miss it!* ✨",
-                parse_mode="Markdown"
-            )
-            await app.bot.forward_message(
-                chat_id=user,
-                from_chat_id=chosen.chat.id,
-                message_id=chosen.message_id
-            )
-        except:
-            USERS.remove(user)
-
-async def auto_loop(app):
-    while True:
-        await send_random_post(app)
-        await asyncio.sleep(86400)  # 24 hours
-
-# --------------------------
 # Build app
 # --------------------------
 app = ApplicationBuilder().token(TOKEN).build()
@@ -248,8 +215,6 @@ app.add_handler(CommandHandler("stats", stats))
 # --------------------------
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    loop = asyncio.get_event_loop()
-    loop.create_task(auto_loop(app))  # start the 24h auto job
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
