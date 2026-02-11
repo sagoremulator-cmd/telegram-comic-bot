@@ -1,12 +1,12 @@
 import os
 import time
 import random
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
@@ -17,7 +17,7 @@ ADMIN_IDS = {5083713667, 7020245048}
 # Public usernames for membership check
 REQUIRED_CHANNELS = ["proaid", "QuickAid", "ArcComic", "ExpertAid"]
 
-# Invite links for buttons (tracking links)
+# Invite links for buttons
 CHANNEL_LINKS = {
     "Waifus": "https://t.me/+8jDIgoFZY98yNDE1",
     "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
@@ -43,7 +43,7 @@ async def is_subscribed(bot, user_id):
     return True
 
 # --------------------------
-# /start handler (deep-link + mandatory check + expiry)
+# /start handler
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -89,7 +89,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_instructions(update)
 
 # --------------------------
-# Instructions message
+# Instructions
 # --------------------------
 async def send_instructions(update: Update):
     message = (
@@ -228,10 +228,10 @@ async def send_random_post(app):
         except:
             USERS.remove(user)
 
-def setup_scheduler(app):
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_random_post, "interval", hours=24, args=[app])
-    scheduler.start()
+async def auto_loop(app):
+    while True:
+        await send_random_post(app)
+        await asyncio.sleep(86400)  # 24 hours
 
 # --------------------------
 # Build app
@@ -248,10 +248,11 @@ app.add_handler(CommandHandler("stats", stats))
 # --------------------------
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    setup_scheduler(app)   # start the 24h auto job
+    loop = asyncio.get_event_loop()
+    loop.create_task(auto_loop(app))  # start the 24h auto job
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-        )
+    )
