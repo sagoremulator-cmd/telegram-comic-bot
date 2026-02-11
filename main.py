@@ -1,5 +1,4 @@
 import os
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 
@@ -33,8 +32,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     message = (
-        "👋 *Welcome to Arc Comics Bot!*\n\n"
-        "_Your gateway to the hottest comics & community_\n\n"
+        "👋 *Welcome to Arc Comics BotYour gateway to the hottest comics & community_\n\n"
         "📌 *How to use me:* \n"
         "1️⃣ Send any comic code (numbers only)\n"
         "2️⃣ I’ll reply with a clickable button linking your comic\n"
@@ -79,18 +77,13 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # --------------------------
-# Webhook setup
+# Run webhook directly
 # --------------------------
-async def main():
+if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    await app.bot.set_webhook(webhook_url)
-
-    await app.run_webhook(
+    app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path="webhook"
+        url_path="webhook",
+        webhook_url=webhook_url
     )
-
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
