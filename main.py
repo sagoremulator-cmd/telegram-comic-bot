@@ -1,31 +1,15 @@
 import os
-from flask import Flask, request, abort
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 
-# Your bot token from environment (same as before)
 TOKEN = os.getenv("TOKEN")
+PORT = int(os.environ.get("PORT", 5000))  # Render gives you a port automatically
 
-# Render gives us the hostname automatically
-BASE_URL = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-if BASE_URL is None:
-    BASE_URL = "localhost:10000"  # For local testing
-
-# Secret webhook path (uses token for security)
-WEBHOOK_PATH = f"/{TOKEN}"
-WEBHOOK_URL = f"https://{BASE_URL}{WEBHOOK_PATH}"
-
-# Create Flask app (mini web server)
-flask_app = Flask(__name__)
-
-# Create Telegram application (no polling!)
-application = Application.builder().token(TOKEN).build()
-
-# ---------------- ----------
-# /start handler (unchanged from your code)
+# --------------------------
+# /start handler
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ Check if user clicked a deep link with a code
     if context.args:
         code = context.args[0]
         if code.isdigit():
@@ -33,15 +17,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # Message with protection
             await update.message.reply_text(
                 "🔎 Click the button to open your comic!",
                 reply_markup=reply_markup,
-                protect_content=True  # Protect from forwarding/copying
+                protect_content=True
             )
-            return  # Exit the function so welcome message is skipped
+            return
 
-    # 👇 Normal welcome message if no deep link
     keyboard = [
         [InlineKeyboardButton("📌 Waifus", url="https://t.me/+8jDIgoFZY98yNDE1"),
          InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/+MjgFpHIjrZgxZTg9")],
@@ -64,52 +46,50 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message,
         reply_markup=reply_markup,
         parse_mode="Markdown",
-        protect_content=True  # Protect welcome message
+        protect_content=True
     )
 
 # --------------------------
-# Message handler (unchanged from your code)
+# Message handler
 # --------------------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
 
     if code.isdigit():
         url = f"https://nhentai.net/g/{code}/"
-
         keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Message with protection
         await update.message.reply_text(
             "🔎 Click the button to open your comic!",
             reply_markup=reply_markup,
-            protect_content=True  # Protect comic link message
+            protect_content=True
         )
     else:
         await update.message.reply_text(
             "❌ Send only the comic code (numbers).",
-            protect_content=True  # Protect error messages
+            protect_content=True
         )
 
-# Add your handlers to the application
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# --------------------------
+# Build app
+# --------------------------
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Flask route for Telegram webhook (this receives updates from Telegram)
-@flask_app.route(WEBHOOK_PATH, methods=["POST"])
-async def webhook():
-    if request.headers.get("content-type") == "application/json":
-        json_data = request.get_json()
-        update = Update.de_json(json_data, application.bot)
-        await application.process_update(update)
-        return "", 200
-    abort(403)  # Block unauthorized access
+# --------------------------
+# Webhook setup
+# --------------------------
+async def main():
+    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    await app.bot.set_webhook(webhook_url)
 
-# A simple health check route (good for Render to know it's alive)
-@flask_app.route("/", methods=["GET"])
-def health():
-    return "Bot is running! 🚀"
+    await app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="webhook"
+    )
 
-# For running locally (testing)
 if __name__ == "__main__":
-    flask_app.run(host="0.0.0.0", port=10000)
+    asyncio.run(main())
