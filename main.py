@@ -5,8 +5,16 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Cal
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
-# List of mandatory channels (usernames without @)
+# Public usernames for membership check (bot must be admin here)
 REQUIRED_CHANNELS = ["WaifusChannel", "QuickAidComics", "ArcComics", "ExpertAidCommunity"]
+
+# Invite links for buttons (your tracking links)
+CHANNEL_LINKS = {
+    "Waifus": "https://t.me/+8jDIgoFZY98yNDE1",
+    "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
+    "Arc Comics": "https://t.me/+VG9pG6hW78E2NWU1",
+    "ExpertAid": "https://t.me/+CgMQndxJB1hlYmNl"
+}
 
 # --------------------------
 # Check if user is subscribed to all channels
@@ -29,10 +37,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await is_subscribed(context.bot, user_id):
         keyboard = [
-            [InlineKeyboardButton("📌 Waifus", url="https://t.me/WaifusChannel")],
-            [InlineKeyboardButton("📌 QuickAid Comics", url="https://t.me/QuickAidComics")],
-            [InlineKeyboardButton("📌 Arc Comics", url="https://t.me/ArcComics")],
-            [InlineKeyboardButton("💡 ExpertAid Community", url="https://t.me/ExpertAidCommunity")],
+            [InlineKeyboardButton("📌 Waifus", url=CHANNEL_LINKS["Waifus"])],
+            [InlineKeyboardButton("📌 QuickAid Comics", url=CHANNEL_LINKS["QuickAid Comics"])],
+            [InlineKeyboardButton("📌 Arc Comics", url=CHANNEL_LINKS["Arc Comics"])],
+            [InlineKeyboardButton("💡 ExpertAid Community", url=CHANNEL_LINKS["ExpertAid"])],
             [InlineKeyboardButton("✅ I Joined", callback_data="joined")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
