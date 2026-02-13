@@ -13,14 +13,14 @@ PORT = int(os.environ.get("PORT", 5000))
 ADMIN_IDS = {5083713667, 7020245048}
 
 # Public usernames for membership check
-REQUIRED_CHANNELS = ["proaid", "QuickAid", "ArcComic", "ExpertAid"]
+REQUIRED_CHANNELS = ["proaid", "QuickAid", "ArcComic", "ExpertAid", "Ai39k"]
 
 # Invite links for buttons (tracking links)
 CHANNEL_LINKS = {
-    "Waifus": "https://t.me/+8jDIgoFZY98yNDE1",
     "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
     "Arc Comics": "https://t.me/+VG9pG6hW78E2NWU1",
-    "ExpertAid": "https://t.me/+CgMQndxJB1hlYmNl"
+    "ExpertAid": "https://t.me/+CgMQndxJB1hlYmNl",
+    "Emma": "https://t.me/+aLdg5hhj0j8zMWU1"
 }
 
 # Track users
@@ -41,27 +41,58 @@ async def is_subscribed(bot, user_id):
     return True
 
 # --------------------------
-# /start handler (deep-link + mandatory check + expiry)
+# Build dynamic keyboard with ticks
+# --------------------------
+async def build_join_keyboard(bot, user_id):
+    keyboard = []
+    mapping = {
+        "QuickAid Comics": "QuickAid",
+        "Arc Comics": "ArcComic",
+        "ExpertAid": "ExpertAid",
+        "Emma": "Ai39k"
+    }
+
+    for name, link in CHANNEL_LINKS.items():
+        username = mapping.get(name)
+        tick = ""
+        if username:
+            try:
+                member = await bot.get_chat_member(f"@{username}", user_id)
+                if member.status in ["member", "administrator", "creator"]:
+                    tick = " ✅"
+            except:
+                pass
+
+        # Preserve 📌 and 💡 emojis
+        if "QuickAid" in name:
+            label = f"📌 {name}{tick}"
+        elif "Arc" in name:
+            label = f"📌 {name}{tick}"
+        elif "ExpertAid" in name:
+            label = f"💡 {name} Community{tick}"
+        elif "Emma" in name:
+            label = f"📌 {name}{tick}"
+        else:
+            label = name + tick
+
+        keyboard.append([InlineKeyboardButton(label, url=link)])
+
+    # Add verify button at bottom
+    keyboard.append([InlineKeyboardButton("✅ I Joined", callback_data="joined")])
+    return InlineKeyboardMarkup(keyboard)
+
+# --------------------------
+# /start handler
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     USERS.add(user_id)
 
-    # If user is not subscribed, show mandatory join buttons
     if not await is_subscribed(context.bot, user_id):
-        # If deep-link argument exists, store it with timestamp
         if context.args:
             PENDING_CODES[user_id] = {"code": context.args[0].strip(), "time": time.time()}
 
-        keyboard = [
-            [InlineKeyboardButton("📌 Waifus", url=CHANNEL_LINKS["Waifus"])],
-            [InlineKeyboardButton("📌 QuickAid Comics", url=CHANNEL_LINKS["QuickAid Comics"])],
-            [InlineKeyboardButton("📌 Arc Comics", url=CHANNEL_LINKS["Arc Comics"])],
-            [InlineKeyboardButton("💡 ExpertAid Community", url=CHANNEL_LINKS["ExpertAid"])],
-            [InlineKeyboardButton("✅ I Joined", callback_data="joined")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
+        reply_markup = await build_join_keyboard(context.bot, user_id)
         await update.message.reply_text(
             "👋 *Welcome to Arc Comics Bot!*\n\n"
             "To unlock features, you must join all required channels below.\n\n"
@@ -72,14 +103,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ✅ If subscribed and deep-link argument exists
     if context.args:
         code = context.args[0].strip()
         if code.isdigit():
             url = f"https://nhentai.net/g/{code}/"
             keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-
             await update.message.reply_text(
                 "🔎 Your comic link is ready:",
                 reply_markup=reply_markup,
@@ -87,7 +116,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # If no argument, show instructions
     await send_instructions(update)
 
 # --------------------------
@@ -119,16 +147,14 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
         await query.message.reply_text("✅ Subscription verified successfully!")
 
-        # If user had a pending deep-link code, unlock it now (check expiry)
         if user_id in PENDING_CODES:
             data = PENDING_CODES.pop(user_id)
-            if time.time() - data["time"] <= 86400:  # 24 hours
+            if time.time() - data["time"] <= 86400:
                 code = data["code"]
                 if code.isdigit():
                     url = f"https://nhentai.net/g/{code}/"
                     keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
-
                     await query.message.reply_text(
                         "🔎 Your comic link is ready:",
                         reply_markup=reply_markup,
@@ -160,7 +186,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url = f"https://nhentai.net/g/{code}/"
         keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
         await update.message.reply_text(
             "🔎 Your comic link is ready:",
             reply_markup=reply_markup,
@@ -220,4 +245,4 @@ if __name__ == "__main__":
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-    )
+        )
