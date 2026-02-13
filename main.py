@@ -9,13 +9,11 @@ from telegram.ext import (
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
-# Admin IDs
 ADMIN_IDS = {5083713667, 7020245048}
+SPECIAL_COMMAND = "742467"
 
-# Mandatory channels (usernames)
 REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "ExpertAid"]
 
-# Invite links for buttons (tracking links)
 CHANNEL_LINKS = {
     "Emma": "https://t.me/+aLdg5hhj0j8zMWU1",
     "Arc Comics": "https://t.me/+VG9pG6hW78E2NWU1",
@@ -23,8 +21,9 @@ CHANNEL_LINKS = {
     "ExpertAid": "https://t.me/+CgMQndxJB1hlYmNl"
 }
 
-# Track pending codes
 PENDING_CODES = {}
+BOT_USERS = set()
+BROADCAST_CONTEXT = {}
 
 async def is_subscribed(bot, user_id):
     for channel in REQUIRED_CHANNELS:
@@ -70,6 +69,7 @@ async def build_join_keyboard(bot, user_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    BOT_USERS.add(user_id)
     if not await is_subscribed(context.bot, user_id):
         if context.args:
             PENDING_CODES[user_id] = {"code": context.args[0].strip(), "time": time.time()}
@@ -100,12 +100,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_instructions(update: Update):
     message = (
         "✨ *Arc Comics Bot Activated!* ✨\n\n"
-        "I instantly turn your comic codes into clickable links.\n\n"
-        "📌 *How to use me:* \n"
-        "1️⃣ Send any comic code (numbers only)\n"
-        "2️⃣ I’ll reply with a secure button linking your comic\n"
-        "3️⃣ Tap the button to read instantly!\n\n"
-        "⚡ Professional. Fast. Reliable."
+        "Send any comic code (numbers only) and I’ll reply with a secure button linking your comic."
     )
     if update.message:
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=True)
@@ -133,82 +128,105 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     return
             else:
-                await query.message.reply_text("⚠️ Your deep-link code expired (24h limit). Please restart with a new link.")
+                await query.message.reply_text("⚠️ Your deep-link code expired.")
         await send_instructions(update)
     else:
         await query.answer("❌ You must join all channels first.", show_alert=True)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not await is_subscribed(context.bot, user_id):
-        await update.message.reply_text(
-            "❌ Access denied.\n\nYou must remain subscribed to all channels.\nUse /start to verify again."
-        )
+    BOT_USERS.add(user_id)
+    text = update.message.text.strip()
+    if text == SPECIAL_COMMAND and user_id in ADMIN_IDS:
+        keyboard = [
+            [InlineKeyboardButton("📊 Stats", callback_data="admin_stats")],
+            [InlineKeyboardButton("📢 Bot Broadcast", callback_data="admin_broadcast_bot")],
+            [InlineKeyboardButton("📢 All Channels + Bot Broadcast", callback_data="admin_broadcast_all")]
+        ]
+        await update.message.reply_text("🔐 Admin Panel", reply_markup=InlineKeyboardMarkup(keyboard))
         return
-    code = update.message.text.strip()
-    if code.isdigit():
-        url = f"https://nhentai.net/g/{code}/"
+    if not await is_subscribed(context.bot, user_id):
+        await update.message.reply_text("❌ Access denied. Use /start to verify again.")
+        return
+    if text.isdigit():
+        url = f"https://nhentai.net/g/{text}/"
         keyboard = [[InlineKeyboardButton("📖 Open Comic", url=url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            "🔎 Your comic link is ready:",
-            reply_markup=reply_markup,
-            protect_content=True
-        )
+        await update.message.reply_text("🔎 Your comic link is ready:", reply_markup=reply_markup, protect_content=True)
     else:
-        await update.message.reply_text(
-            "⚠️ Please send only the comic code (numbers).",
-            protect_content=True
-        )
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⚠️ Please send only the comic code (numbers).", protect_content=True)
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if user_id not in ADMIN_IDS:
         return
-    if update.message.reply_to_message:
-        for username in REQUIRED_CHANNELS:
-            try:
-                await context.bot.forward_message(
-                    chat_id=f"@{username}",
-                    from_chat_id=update.message.chat_id,
-                    message_id=update.message.reply_to_message.message_id
-                )
-            except:
-                pass
-        await update.message.reply_text("📢 Forwarded to all channels.")
-    else:
-        text = " ".join(context.args)
-        for username in REQUIRED_CHANNELS:
-            try:
-                await context.bot.send_message(chat_id=f"@{username}", text=text)
-            except:
-                pass
-        await update.message.reply_text("📢 Broadcast sent to all channels.")
+    if query.data == "admin_stats":
+        await query.message.reply_text(f"📊 Bot Users: {len(BOT_USERS)}")
+    elif query.data == "admin_broadcast_bot":
+        BROADCAST_CONTEXT[user_id] = "bot"
+        await query.message.reply_text("📢 Send the post you want to broadcast to bot users.")
+    elif query.data == "admin_broadcast_all":
+        BROADCAST_CONTEXT[user_id] = "all"
+        await query.message.reply_text("📢 Send the post you want to broadcast to bot users + channels.")
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+async def handle_broadcast_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS or user_id not in BROADCAST_CONTEXT:
         return
-    counts = []
-    mapping = {
-        "Emma": "Ai39k",
-        "ArcComic": "ArcComic",
-        "QuickAid": "QuickAid",
-        "ExpertAid": "ExpertAid"
-    }
-    for name, username in mapping.items():
-        try:
-            count = await context.bot.get_chat_members_count(f"@{username}")
-            counts.append(f"{name}: {count}")
-        except:
-            counts.append(f"{name}: error")
-    await update.message.reply_text("📊 Stats:\n" + "\n".join(counts))
+    BROADCAST_CONTEXT["message"] = update.message
+    keyboard = [
+        [InlineKeyboardButton("✅ Send", callback_data="broadcast_send")],
+        [InlineKeyboardButton("🔙 Back", callback_data="broadcast_back")]
+    ]
+    await update.message.reply_text("Confirm broadcast:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def broadcast_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if user_id not in ADMIN_IDS or user_id not in BROADCAST_CONTEXT:
+        return
+    if query.data == "broadcast_send":
+        mode = BROADCAST_CONTEXT[user_id]
+        msg = BROADCAST_CONTEXT["message"]
+        if mode == "bot":
+            for uid in BOT_USERS:
+                try:
+                    await msg.copy(uid)
+                except:
+                    pass
+        elif mode == "all":
+            for uid in BOT_USERS:
+                try:
+                    await msg.copy(uid)
+                except:
+                    pass
+            for channel in REQUIRED_CHANNELS:
+                try:
+                    await msg.copy(f"@{channel}")
+                except:
+                    pass
+        BROADCAST_CONTEXT.pop(user_id, None)
+        BROADCAST_CONTEXT.pop("message", None)
+        await query.message.reply_text("📢 Broadcast sent.")
+    elif query.data == "broadcast_back":
+        BROADCAST_CONTEXT.pop(user_id, None)
+        BROADCAST_CONTEXT.pop("message", None)
+        await query.message.reply_text("🔙 Broadcast cancelled.")
+
+# --------------------------
+# Build app
+# --------------------------
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
+app.add_handler(CallbackQueryHandler(admin_callback, pattern="admin_.*"))
+app.add_handler(CallbackQueryHandler(broadcast_confirm, pattern="broadcast_.*"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-app.add_handler(CommandHandler("broadcast", broadcast))
-app.add_handler(CommandHandler("stats", stats))
+app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_broadcast_content))
 
+# --------------------------
+# Run webhook
+# --------------------------
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
     app.run_webhook(
@@ -216,4 +234,4 @@ if __name__ == "__main__":
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-    )
+        )
