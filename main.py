@@ -6,6 +6,9 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes
 )
 
+# Import Ads system
+from Ads import maybe_show_ads
+
 # --------------------------
 # Universal Config
 # --------------------------
@@ -107,6 +110,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 protect_content=True
             )
+            # Show ads after code conversion
+            await maybe_show_ads(update)
             return
     await send_instructions(update)
 
@@ -124,8 +129,7 @@ async def send_instructions(update: Update):
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=True)
     else:
         await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=True)
-
-async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     if await is_subscribed(context.bot, user_id):
@@ -144,6 +148,8 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=reply_markup,
                         protect_content=True
                     )
+                    # Show ads after code conversion
+                    await maybe_show_ads(update)
                     return
             else:
                 await query.message.reply_text("⚠️ Your deep-link code expired (24h limit). Please restart with a new link.")
@@ -169,12 +175,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             protect_content=True
         )
+        # Show ads after code conversion
+        await maybe_show_ads(update)
     else:
         await update.message.reply_text(
             "⚠️ Please send only the comic code (numbers).",
             protect_content=True
         )
-        # --------------------------
+
+# --------------------------
 # Broadcast Command
 # --------------------------
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -228,4 +237,4 @@ if __name__ == "__main__":
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-    )
+                    )
