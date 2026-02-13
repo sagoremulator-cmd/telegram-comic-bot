@@ -128,8 +128,7 @@ async def send_instructions(update: Update):
     if update.message:
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=True)
     else:
-        await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=True)
-        async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=True)async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     if await is_subscribed(context.bot, user_id):
@@ -237,4 +236,4 @@ if __name__ == "__main__":
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-                    )
+    )
