@@ -6,6 +6,9 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes
 )
 
+# --------------------------
+# Universal Config
+# --------------------------
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
@@ -26,6 +29,12 @@ CHANNEL_LINKS = {
 # Track pending codes
 PENDING_CODES = {}
 
+# Track bot users (for stats)
+BOT_USERS = set()
+
+# --------------------------
+# Subscription Check
+# --------------------------
 async def is_subscribed(bot, user_id):
     for channel in REQUIRED_CHANNELS:
         try:
@@ -68,8 +77,12 @@ async def build_join_keyboard(bot, user_id):
     keyboard.append([InlineKeyboardButton("✅ I Joined", callback_data="joined")])
     return InlineKeyboardMarkup(keyboard)
 
+# --------------------------
+# Start Command
+# --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    BOT_USERS.add(user_id)  # track bot users
     if not await is_subscribed(context.bot, user_id):
         if context.args:
             PENDING_CODES[user_id] = {"code": context.args[0].strip(), "time": time.time()}
@@ -140,6 +153,7 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    BOT_USERS.add(user_id)  # track bot users
     if not await is_subscribed(context.bot, user_id):
         await update.message.reply_text(
             "❌ Access denied.\n\nYou must remain subscribed to all channels.\nUse /start to verify again."
@@ -160,7 +174,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ Please send only the comic code (numbers).",
             protect_content=True
         )
-
+        # --------------------------
+# Broadcast Command
+# --------------------------
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
@@ -184,24 +200,17 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         await update.message.reply_text("📢 Broadcast sent to all channels.")
 
+# --------------------------
+# Stats Command (Bot Users)
+# --------------------------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
-    counts = []
-    mapping = {
-        "Emma": "Ai39k",
-        "ArcComic": "ArcComic",
-        "QuickAid": "QuickAid",
-        "ExpertAid": "ExpertAid"
-    }
-    for name, username in mapping.items():
-        try:
-            count = await context.bot.get_chat_members_count(f"@{username}")
-            counts.append(f"{name}: {count}")
-        except:
-            counts.append(f"{name}: error")
-    await update.message.reply_text("📊 Stats:\n" + "\n".join(counts))
+    await update.message.reply_text(f"📊 Bot Users: {len(BOT_USERS)}")
 
+# --------------------------
+# Build App
+# --------------------------
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
@@ -209,6 +218,9 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.add_handler(CommandHandler("broadcast", broadcast))
 app.add_handler(CommandHandler("stats", stats))
 
+# --------------------------
+# Run Webhook
+# --------------------------
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
     app.run_webhook(
