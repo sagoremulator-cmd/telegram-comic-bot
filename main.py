@@ -80,7 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "After joining, click *✅ I Joined* to verify.",
             reply_markup=reply_markup,
             parse_mode="Markdown",
-            protect_content=True
+            protect_content=False
         )
         return
     if context.args:
@@ -93,7 +93,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🔎 Your comic link is ready:",
                 reply_markup=reply_markup,
                 parse_mode="Markdown",
-                protect_content=False  # allow forwarding/copying
+                protect_content=False
             )
             await maybe_show_ads(update)
             return
@@ -107,20 +107,20 @@ async def send_instructions(update: Update):
         "1️⃣ Send any comic code (numbers only)\n"
         "2️⃣ I’ll reply with a secure button linking your comic\n"
         "3️⃣ Tap the button to read instantly!\n\n"
-        "⚡ Professional. Fast. Reliable.\n\n"
+        "⚡ Professional. Fast. Reliable.\n"
         "💫 Doesn't have Codes? Get Codes ➜ @ArcComic"
     )
     if update.message:
-        await update.message.reply_text(message, parse_mode="Markdown", protect_content=True)
+        await update.message.reply_text(message, parse_mode="Markdown", protect_content=False)
     else:
-        await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=True)
+        await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=False)
 
 async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     if await is_subscribed(context.bot, user_id):
         await query.message.delete()
-        await query.message.reply_text("✅ Subscription verified successfully!")
+        await query.message.reply_text("✅ Subscription verified successfully!", protect_content=False)
         if user_id in PENDING_CODES:
             data = PENDING_CODES.pop(user_id)
             if time.time() - data["time"] <= 86400:
@@ -133,12 +133,12 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "🔎 Your comic link is ready:",
                         reply_markup=reply_markup,
                         parse_mode="Markdown",
-                        protect_content=False  # allow forwarding/copying
+                        protect_content=False
                     )
                     await maybe_show_ads(update)
                     return
             else:
-                await query.message.reply_text("⚠️ Your deep-link code expired (24h limit). Please restart with a new link.")
+                await query.message.reply_text("⚠️ Your deep-link code expired (24h limit). Please restart with a new link.", protect_content=False)
         await send_instructions(update)
     else:
         await query.answer("❌ You must join all channels first.", show_alert=True)
@@ -148,7 +148,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BOT_USERS.add(user_id)
     if not await is_subscribed(context.bot, user_id):
         await update.message.reply_text(
-            "❌ Access denied.\n\nYou must remain subscribed to all channels.\nUse /start to verify again."
+            "❌ Access denied.\n\nYou must remain subscribed to all channels.\nUse /start to verify again.",
+            protect_content=False
         )
         return
     code = update.message.text.strip()
@@ -160,13 +161,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔎 Your comic link is ready:",
             reply_markup=reply_markup,
             parse_mode="Markdown",
-            protect_content=False  # allow forwarding/copying
+            protect_content=False
         )
         await maybe_show_ads(update)
     else:
         await update.message.reply_text(
             "⚠️ Please send only the comic code (numbers).",
-            protect_content=True
+            protect_content=False
         )
 
 app = ApplicationBuilder().token(TOKEN).build()
@@ -181,4 +182,4 @@ if __name__ == "__main__":
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-        )
+    )
