@@ -92,7 +92,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "🔎 Your comic link is ready:",
                 reply_markup=reply_markup,
-                protect_content=True
+                parse_mode="Markdown",
+                protect_content=False  # allow forwarding/copying
             )
             await maybe_show_ads(update)
             return
@@ -106,7 +107,8 @@ async def send_instructions(update: Update):
         "1️⃣ Send any comic code (numbers only)\n"
         "2️⃣ I’ll reply with a secure button linking your comic\n"
         "3️⃣ Tap the button to read instantly!\n\n"
-        "⚡ Professional. Fast. Reliable."
+        "⚡ Professional. Fast. Reliable.\n\n"
+        "💫 Doesn't have Codes? Get Codes ➜ @ArcComic"
     )
     if update.message:
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=True)
@@ -130,7 +132,8 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_text(
                         "🔎 Your comic link is ready:",
                         reply_markup=reply_markup,
-                        protect_content=True
+                        parse_mode="Markdown",
+                        protect_content=False  # allow forwarding/copying
                     )
                     await maybe_show_ads(update)
                     return
@@ -156,7 +159,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "🔎 Your comic link is ready:",
             reply_markup=reply_markup,
-            protect_content=True
+            parse_mode="Markdown",
+            protect_content=False  # allow forwarding/copying
         )
         await maybe_show_ads(update)
     else:
@@ -165,40 +169,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             protect_content=True
         )
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    if update.message.reply_to_message:
-        for username in REQUIRED_CHANNELS:
-            try:
-                await context.bot.forward_message(
-                    chat_id=f"@{username}",
-                    from_chat_id=update.message.chat_id,
-                    message_id=update.message.reply_to_message.message_id
-                )
-            except:
-                pass
-        await update.message.reply_text("📢 Forwarded to all channels.")
-    else:
-        text = " ".join(context.args)
-        for username in REQUIRED_CHANNELS:
-            try:
-                await context.bot.send_message(chat_id=f"@{username}", text=text)
-            except:
-                pass
-        await update.message.reply_text("📢 Broadcast sent to all channels.")
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    await update.message.reply_text(f"📊 Bot Users: {len(BOT_USERS)}")
-
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-app.add_handler(CommandHandler("broadcast", broadcast))
-app.add_handler(CommandHandler("stats", stats))
 
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
@@ -207,4 +181,4 @@ if __name__ == "__main__":
         port=PORT,
         url_path="webhook",
         webhook_url=webhook_url
-    )
+        )
