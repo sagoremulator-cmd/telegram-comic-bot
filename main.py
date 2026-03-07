@@ -58,7 +58,7 @@ async def build_join_keyboard(bot, user_id):
         elif "Arc" in name:
             label = f"📌 {name}{tick}"
         elif "BrainRage" in name:
-            label = f"💡 {name} Community{tick}"
+            label = f"💡 {name}{tick}"
         elif "Emma" in name:
             label = f"📌 {name}{tick}"
         else:
