@@ -13,13 +13,13 @@ TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
 ADMIN_IDS = {5083713667, 7020245048}
-REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "ExpertAid"]
+REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "BrainRage"]
 
 CHANNEL_LINKS = {
     "Emma": "https://t.me/+aLdg5hhj0j8zMWU1",
     "Arc Comics": "https://t.me/+VG9pG6hW78E2NWU1",
     "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
-    "ExpertAid": "https://t.me/+CgMQndxJB1hlYmNl"
+    "BrainRage": "https://t.me/+UYWqbGQc9kdiNjk1"
 }
 
 PENDING_CODES = {}
@@ -41,7 +41,7 @@ async def build_join_keyboard(bot, user_id):
         "Emma": "Ai39k",
         "Arc Comics": "ArcComic",
         "QuickAid Comics": "QuickAid",
-        "ExpertAid": "ExpertAid"
+        "BrainRage": "BrainRage"
     }
     for name, link in CHANNEL_LINKS.items():
         username = mapping.get(name)
@@ -57,7 +57,7 @@ async def build_join_keyboard(bot, user_id):
             label = f"📌 {name}{tick}"
         elif "Arc" in name:
             label = f"📌 {name}{tick}"
-        elif "ExpertAid" in name:
+        elif "BrainRage" in name:
             label = f"💡 {name} Community{tick}"
         elif "Emma" in name:
             label = f"📌 {name}{tick}"
@@ -114,7 +114,6 @@ async def send_instructions(update: Update):
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=False)
     else:
         await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=False)
-
 async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
