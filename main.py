@@ -13,13 +13,13 @@ TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
 ADMIN_IDS = {5083713667, 7020245048}
-REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "BrainRage"]
+REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "JavPeel"]
 
 CHANNEL_LINKS = {
     "Emma": "https://t.me/+aLdg5hhj0j8zMWU1",
     "Arc Comics": "https://t.me/+VG9pG6hW78E2NWU1",
     "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
-    "BrainRage": "https://t.me/+UYWqbGQc9kdiNjk1"
+    "Jav Collector ✨": "https://t.me/+fWucI7fokFFmMzU1"
 }
 
 PENDING_CODES = {}
@@ -41,7 +41,7 @@ async def build_join_keyboard(bot, user_id):
         "Emma": "Ai39k",
         "Arc Comics": "ArcComic",
         "QuickAid Comics": "QuickAid",
-        "BrainRage": "BrainRage"
+        "Jav Collector ✨": "JavPeel"
     }
     for name, link in CHANNEL_LINKS.items():
         username = mapping.get(name)
@@ -57,8 +57,8 @@ async def build_join_keyboard(bot, user_id):
             label = f"📌 {name}{tick}"
         elif "Arc" in name:
             label = f"📌 {name}{tick}"
-        elif "BrainRage" in name:
-            label = f"💡 {name}{tick}"
+        elif "Jav Collector" in name:
+            label = f"✨ {name}{tick}"
         elif "Emma" in name:
             label = f"📌 {name}{tick}"
         else:
@@ -105,7 +105,7 @@ async def send_instructions(update: Update):
         "I instantly turn your comic codes into clickable links.\n\n"
         "📌 *How to use me:* \n"
         "1️⃣ Send any comic code (numbers only)\n"
-        "2️⃣ I’ll reply with a secure button linking your comic\n"
+        "2️⃣ I'll reply with a secure button linking your comic\n"
         "3️⃣ Tap the button to read instantly!\n\n"
         "⚡ Professional. Fast. Reliable.\n"
         "💫 Doesn't have Codes? Get Codes ➜ @ArcComic"
@@ -114,6 +114,7 @@ async def send_instructions(update: Update):
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=False)
     else:
         await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=False)
+
 async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
