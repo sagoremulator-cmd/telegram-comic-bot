@@ -13,13 +13,13 @@ TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
 ADMIN_IDS = {5083713667, 7020245048}
-REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "JavPeel"]
+REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "BrainRage"]
 
 CHANNEL_LINKS = {
     "Emma": "https://t.me/+aLdg5hhj0j8zMWU1",
     "Arc Comics": "https://t.me/+VG9pG6hW78E2NWU1",
     "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
-    "Jav Collector ✨": "https://t.me/+fWucI7fokFFmMzU1"
+    "BrainRage ✨": "https://t.me/+UYWqbGQc9kdiNjk1"
 }
 
 # ✅ Blogspot reader page — all comic links go through here
@@ -44,7 +44,7 @@ async def build_join_keyboard(bot, user_id):
         "Emma": "Ai39k",
         "Arc Comics": "ArcComic",
         "QuickAid Comics": "QuickAid",
-        "Jav Collector ✨": "JavPeel"
+        "BrainRage ✨": "BrainRage"
     }
     for name, link in CHANNEL_LINKS.items():
         username = mapping.get(name)
@@ -60,7 +60,7 @@ async def build_join_keyboard(bot, user_id):
             label = f"📌 {name}{tick}"
         elif "Arc" in name:
             label = f"📌 {name}{tick}"
-        elif "Jav Collector" in name:
+        elif "BrainRage" in name:
             label = f"✨ {name}{tick}"
         elif "Emma" in name:
             label = f"📌 {name}{tick}"
@@ -189,3 +189,4 @@ if __name__ == "__main__":
         url_path="webhook",
         webhook_url=webhook_url
     )
+
