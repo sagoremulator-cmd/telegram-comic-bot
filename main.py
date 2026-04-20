@@ -1,5 +1,8 @@
 import os
 import time
+import threading
+import asyncio
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -27,6 +30,33 @@ BLOG_BASE = "https://dogyabhi.blogspot.com/p/read.html"
 
 PENDING_CODES = {}
 BOT_USERS = set()
+
+# ============================================================
+# 🏓 KEEP-ALIVE PING SERVER
+# Runs on a background thread — UptimeRobot hits /ping every
+# 5 minutes so Render never puts the bot to sleep.
+# ============================================================
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/ping":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK - Bot is alive!")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Silence the ping logs so console stays clean
+
+def start_ping_server():
+    server = HTTPServer(("0.0.0.0", 8080), PingHandler)
+    server.serve_forever()
+
+# Start ping server in background (won't block the bot)
+threading.Thread(target=start_ping_server, daemon=True).start()
+# ============================================================
+
 
 async def is_subscribed(bot, user_id):
     for channel in REQUIRED_CHANNELS:
@@ -189,4 +219,3 @@ if __name__ == "__main__":
         url_path="webhook",
         webhook_url=webhook_url
     )
-
