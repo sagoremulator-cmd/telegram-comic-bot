@@ -1,7 +1,8 @@
 import os
 import time
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from tornado.web import RequestHandler, Application
+from tornado.ioloop import IOLoop
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -13,6 +14,7 @@ from Ads import maybe_show_ads
 
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
+RENDER_HOST = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 
 ADMIN_IDS = {5083713667, 7020245048}
 REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "BrainRage"]
@@ -28,28 +30,6 @@ BLOG_BASE = "https://dogyabhi.blogspot.com/p/read.html"
 
 PENDING_CODES = {}
 BOT_USERS = set()
-
-# ============================================================
-# 🏓 KEEP-ALIVE PING SERVER
-# Runs on port 8080 in a background thread.
-# UptimeRobot hits /ping every 5 min → Render never sleeps.
-# Uses only built-in Python — zero extra packages needed.
-# ============================================================
-class PingHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK - Bot is alive!")
-
-    def log_message(self, format, *args):
-        pass  # silence ping logs
-
-def start_ping_server():
-    server = HTTPServer(("0.0.0.0", 8080), PingHandler)
-    server.serve_forever()
-
-threading.Thread(target=start_ping_server, daemon=True).start()
-# ============================================================
 
 
 async def is_subscribed(bot, user_id):
@@ -206,17 +186,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# ============================================================
+# 🏓 KEEP-ALIVE /ping handler using Tornado (already installed)
+# Runs on the SAME port as the webhook — no extra packages!
+# ============================================================
+class PingHandler(RequestHandler):
+    def get(self):
+        self.write("OK - Bot is alive!")
 
-if __name__ == "__main__":
-    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    app.run_webhook(
+
+async def main():
+    webhook_url = f"https://{RENDER_HOST}/webhook"
+
+    ptb_app = ApplicationBuilder().token(TOKEN).build()
+    ptb_app.add_handler(CommandHandler("start", start))
+    ptb_app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
+    ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    await ptb_app.initialize()
+    await ptb_app.start()
+    await ptb_app.updater.start_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
-        webhook_url=webhook_url
+        webhook_url=webhook_url,
+        custom_url_paths={"/ping": PingHandler},  # ✅ ping on same port
     )
 
+    # Keep running forever
+    await asyncio.Event().wait()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
