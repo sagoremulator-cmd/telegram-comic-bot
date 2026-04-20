@@ -1,8 +1,6 @@
 import os
 import time
-import threading
-import asyncio
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -25,37 +23,10 @@ CHANNEL_LINKS = {
     "BrainRage ✨": "https://t.me/+UYWqbGQc9kdiNjk1"
 }
 
-# ✅ Blogspot reader page — all comic links go through here
 BLOG_BASE = "https://dogyabhi.blogspot.com/p/read.html"
 
 PENDING_CODES = {}
 BOT_USERS = set()
-
-# ============================================================
-# 🏓 KEEP-ALIVE PING SERVER
-# Runs on a background thread — UptimeRobot hits /ping every
-# 5 minutes so Render never puts the bot to sleep.
-# ============================================================
-class PingHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/ping":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK - Bot is alive!")
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def log_message(self, format, *args):
-        pass  # Silence the ping logs so console stays clean
-
-def start_ping_server():
-    server = HTTPServer(("0.0.0.0", 8080), PingHandler)
-    server.serve_forever()
-
-# Start ping server in background (won't block the bot)
-threading.Thread(target=start_ping_server, daemon=True).start()
-# ============================================================
 
 
 async def is_subscribed(bot, user_id):
@@ -67,6 +38,7 @@ async def is_subscribed(bot, user_id):
         except:
             return False
     return True
+
 
 async def build_join_keyboard(bot, user_id):
     keyboard = []
@@ -100,6 +72,7 @@ async def build_join_keyboard(bot, user_id):
     keyboard.append([InlineKeyboardButton("✅ I Joined", callback_data="joined")])
     return InlineKeyboardMarkup(keyboard)
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     BOT_USERS.add(user_id)
@@ -132,6 +105,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await send_instructions(update)
 
+
 async def send_instructions(update: Update):
     message = (
         "✨ *Arc Comics Bot Activated!* ✨\n\n"
@@ -147,6 +121,7 @@ async def send_instructions(update: Update):
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=False)
     else:
         await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=False)
+
 
 async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -179,6 +154,7 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.answer("❌ You must join all channels first.", show_alert=True)
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     BOT_USERS.add(user_id)
@@ -206,6 +182,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             protect_content=False
         )
 
+
+# ============================================================
+# 🏓 KEEP-ALIVE — /ping on the SAME port as webhook
+# ============================================================
+async def ping(request):
+    return web.Response(text="OK - Bot is alive!")
+
+
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
@@ -213,9 +197,15 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+
+    # Attach /ping to the same aiohttp server PTB uses internally
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
-        webhook_url=webhook_url
+        webhook_url=webhook_url,
+        secret_token=None,
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+        extra_routes=[web.get("/ping", ping)],  # ✅ ping lives on same port
     )
