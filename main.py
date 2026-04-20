@@ -1,8 +1,5 @@
 import os
 import time
-from tornado.web import RequestHandler, Application
-from tornado.ioloop import IOLoop
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -14,7 +11,6 @@ from Ads import maybe_show_ads
 
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
-RENDER_HOST = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 
 ADMIN_IDS = {5083713667, 7020245048}
 REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "BrainRage"]
@@ -26,11 +22,11 @@ CHANNEL_LINKS = {
     "BrainRage ✨": "https://t.me/+UYWqbGQc9kdiNjk1"
 }
 
+# ✅ Blogspot reader page — all comic links go through here
 BLOG_BASE = "https://dogyabhi.blogspot.com/p/read.html"
 
 PENDING_CODES = {}
 BOT_USERS = set()
-
 
 async def is_subscribed(bot, user_id):
     for channel in REQUIRED_CHANNELS:
@@ -41,7 +37,6 @@ async def is_subscribed(bot, user_id):
         except:
             return False
     return True
-
 
 async def build_join_keyboard(bot, user_id):
     keyboard = []
@@ -75,7 +70,6 @@ async def build_join_keyboard(bot, user_id):
     keyboard.append([InlineKeyboardButton("✅ I Joined", callback_data="joined")])
     return InlineKeyboardMarkup(keyboard)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     BOT_USERS.add(user_id)
@@ -108,7 +102,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await send_instructions(update)
 
-
 async def send_instructions(update: Update):
     message = (
         "✨ *Arc Comics Bot Activated!* ✨\n\n"
@@ -124,7 +117,6 @@ async def send_instructions(update: Update):
         await update.message.reply_text(message, parse_mode="Markdown", protect_content=False)
     else:
         await update.callback_query.message.reply_text(message, parse_mode="Markdown", protect_content=False)
-
 
 async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -157,7 +149,6 @@ async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.answer("❌ You must join all channels first.", show_alert=True)
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     BOT_USERS.add(user_id)
@@ -185,37 +176,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             protect_content=False
         )
 
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# ============================================================
-# 🏓 KEEP-ALIVE /ping handler using Tornado (already installed)
-# Runs on the SAME port as the webhook — no extra packages!
-# ============================================================
-class PingHandler(RequestHandler):
-    def get(self):
-        self.write("OK - Bot is alive!")
-
-
-async def main():
-    webhook_url = f"https://{RENDER_HOST}/webhook"
-
-    ptb_app = ApplicationBuilder().token(TOKEN).build()
-    ptb_app.add_handler(CommandHandler("start", start))
-    ptb_app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
-    ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    await ptb_app.initialize()
-    await ptb_app.start()
-    await ptb_app.updater.start_webhook(
+if __name__ == "__main__":
+    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
-        webhook_url=webhook_url,
-        custom_url_paths={"/ping": PingHandler},  # ✅ ping on same port
+        webhook_url=webhook_url
     )
-
-    # Keep running forever
-    await asyncio.Event().wait()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
