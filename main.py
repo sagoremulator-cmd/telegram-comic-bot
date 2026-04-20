@@ -1,6 +1,7 @@
 import os
 import time
-from aiohttp import web
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -27,6 +28,28 @@ BLOG_BASE = "https://dogyabhi.blogspot.com/p/read.html"
 
 PENDING_CODES = {}
 BOT_USERS = set()
+
+# ============================================================
+# 🏓 KEEP-ALIVE PING SERVER
+# Runs on port 8080 in a background thread.
+# UptimeRobot hits /ping every 5 min → Render never sleeps.
+# Uses only built-in Python — zero extra packages needed.
+# ============================================================
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK - Bot is alive!")
+
+    def log_message(self, format, *args):
+        pass  # silence ping logs
+
+def start_ping_server():
+    server = HTTPServer(("0.0.0.0", 8080), PingHandler)
+    server.serve_forever()
+
+threading.Thread(target=start_ping_server, daemon=True).start()
+# ============================================================
 
 
 async def is_subscribed(bot, user_id):
@@ -183,13 +206,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ============================================================
-# 🏓 KEEP-ALIVE — /ping on the SAME port as webhook
-# ============================================================
-async def ping(request):
-    return web.Response(text="OK - Bot is alive!")
-
-
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
@@ -197,15 +213,10 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-
-    # Attach /ping to the same aiohttp server PTB uses internally
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path="webhook",
-        webhook_url=webhook_url,
-        secret_token=None,
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-        extra_routes=[web.get("/ping", ping)],  # ✅ ping lives on same port
+        webhook_url=webhook_url
     )
+
