@@ -1,5 +1,7 @@
 import os
 import time
+import asyncio
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -214,11 +216,40 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-if __name__ == "__main__":
+
+async def ping(request):
+    """Health-check endpoint for cron-job.org to keep the free Render instance awake."""
+    return web.Response(text="OK")
+
+
+async def telegram_webhook(request):
+    """Receives updates from Telegram and hands them to the PTB application."""
+    data = await request.json()
+    update = Update.de_json(data, app.bot)
+    await app.update_queue.put(update)
+    return web.Response(text="OK")
+
+
+async def main():
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path="webhook",
-        webhook_url=webhook_url
-    )
+
+    await app.bot.set_webhook(url=webhook_url)
+
+    aio_app = web.Application()
+    aio_app.router.add_get("/ping", ping)
+    aio_app.router.add_post("/webhook", telegram_webhook)
+
+    runner = web.AppRunner(aio_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+    async with app:
+        await app.start()
+        print(f"Bot is running. Webhook: {webhook_url}  Health check: /ping")
+        await asyncio.Event().wait()  # run forever
+        await app.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
