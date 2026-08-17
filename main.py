@@ -217,7 +217,7 @@ app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 
-async def ping(request):
+async def healthz(request):
     """Health-check endpoint for cron-job.org to keep the free Render instance awake."""
     return web.Response(text="OK")
 
@@ -236,7 +236,7 @@ async def main():
     await app.bot.set_webhook(url=webhook_url)
 
     aio_app = web.Application()
-    aio_app.router.add_get("/ping", ping)
+    aio_app.router.add_get("/healthz", healthz)
     aio_app.router.add_post("/webhook", telegram_webhook)
 
     runner = web.AppRunner(aio_app)
@@ -246,7 +246,7 @@ async def main():
 
     async with app:
         await app.start()
-        print(f"Bot is running. Webhook: {webhook_url}  Health check: /ping")
+        print(f"Bot is running. Webhook: {webhook_url}  Health check: /healthz")
         await asyncio.Event().wait()  # run forever
         await app.stop()
 
