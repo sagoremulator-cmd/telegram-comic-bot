@@ -44,7 +44,7 @@ def get_ads_keyboard(ad):
     return InlineKeyboardMarkup([[InlineKeyboardButton(ad["cta"]["label"], url=ad["cta"]["url"])]])
 
 async def maybe_show_ads(update):
-    """Show ads only if 1 hour passed since last ad for this user"""
+    """Show ads only if 1 hour passed since last ad for this user. Returns True if an ad was shown."""
     user_id = update.effective_user.id
     now = time.time()
     last_time = LAST_AD_TIME.get(user_id, 0)
@@ -52,10 +52,12 @@ async def maybe_show_ads(update):
     # 1 hour = 3600 seconds
     if now - last_time >= 3600:
         ad = random.choice(ADS)  # pick random ad
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"{ad['headline']}\n{ad['body']}",
             reply_markup=get_ads_keyboard(ad),
             parse_mode="Markdown",
             protect_content=True
         )
         LAST_AD_TIME[user_id] = now
+        return True
+    return False
