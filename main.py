@@ -336,6 +336,74 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🛠️ *Admin Panel*", parse_mode="Markdown", reply_markup=admin_menu_keyboard())
 
 
+LEGACY_ADS = [
+    {
+        "headline": "*#Ads PR GRAM Promote Anything*",
+        "body": "Get Members for your Channel/Group/Bot For Free",
+        "button_text": "Join Now", "button_url": "https://t.me/gram_piarbot?start=5083713667"
+    },
+    {
+        "headline": "*#Ads Inside Ads Monetize Telegram Channel*",
+        "body": "High Paying Monetization Service In Telegram",
+        "button_text": "Monetize Now", "button_url": "https://t.me/InsideAds_bot/open?startapp=r_5083713667"
+    },
+    {
+        "headline": "*#Ads Bitget Official*",
+        "body": "💰Get up to 500USDT welcome pack on your first launch and Enjoy 50% off transaction fees!",
+        "button_text": "Join Now",
+        "button_url": "https://t.me/BitgetOfficialBot/Bitget?startapp=JwnaGhlngUX3oFNY1AUuJHFa38jeKvF"
+    },
+    {
+        "headline": "*#Ads FoxiGrow *",
+        "body": "Earn rewards by completing tasks, Minimum Withdrawal 2USDT",
+        "button_text": "Earn Now", "button_url": "https://t.me/FoxiGrowbot?start=ref_5083713667"
+    },
+    {
+        "headline": "*#Ads Hot Wallet*",
+        "body": "Mine HOT On Near Protocol",
+        "button_text": "Mine Now", "button_url": "https://app.hot-labs.org/link?7814048-village-279238"
+    },
+    {
+        "headline": "*#Ads Gmail Farmer*",
+        "body": "Create Gmail Account And Get Paid",
+        "button_text": "Join Now", "button_url": "https://t.me/GmailFarmerBot?start=5083713667"
+    },
+]
+
+
+async def migrate_legacy_ads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /migrate_ads — one-time command to import the old hardcoded Ads.py list into the
+    new Gist-backed Text Ads system. Safe to run multiple times; it skips ads that
+    look already-imported (matched by headline) so it won't create duplicates.
+    """
+    if not is_admin(update.effective_user.id):
+        return
+
+    existing_headlines = {ad["headline"] for ad in storage.get_all_text_ads()}
+    imported = 0
+    skipped = 0
+
+    for legacy in LEGACY_ADS:
+        if legacy["headline"] in existing_headlines:
+            skipped += 1
+            continue
+        await storage.add_text_ad({
+            "headline": legacy["headline"],
+            "body": legacy["body"],
+            "media_file_id": None,
+            "media_type": None,
+            "button_text": legacy["button_text"],
+            "button_url": legacy["button_url"],
+        })
+        imported += 1
+
+    await update.message.reply_text(
+        f"✅ Migration complete.\nImported: {imported}\nSkipped (already present): {skipped}\n\n"
+        f"Check them in /admin → 📝 Ads Settings → 📋 Text Ads (pool)."
+    )
+
+
 async def admin_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles all adm_* callback buttons that are NOT part of the broadcast conversation."""
     query = update.callback_query
@@ -831,6 +899,7 @@ async def scheduler_loop(bot):
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin_command))
+app.add_handler(CommandHandler("migrate_ads", migrate_legacy_ads_command))
 app.add_handler(broadcast_conversation)
 app.add_handler(ads_manager.build_text_ad_conversation())
 app.add_handler(ads_manager.build_text_ad_freq_conversation())
