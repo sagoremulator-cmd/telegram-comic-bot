@@ -9,8 +9,8 @@ from telegram.ext import (
     ConversationHandler
 )
 
-from Ads import maybe_show_ads
 import storage
+import ads_manager
 
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
@@ -37,22 +37,59 @@ USER_CONVERT_COUNT = {}
 
 def get_comic_url(user_id: int, code: str) -> str:
     """
-    Every 5th conversion per user goes through GitHub landing page.
-    All other conversions go direct to nhentai.
+    Every Nth conversion per user (N = storage.get_gateway_frequency(), admin-editable)
+    goes through the GitHub landing page. All other conversions go direct to nhentai.
     Returns (url, is_gateway) so callers can log gateway views.
     """
     count = USER_CONVERT_COUNT.get(user_id, 0) + 1
     USER_CONVERT_COUNT[user_id] = count
 
-    if count % 5 == 0:
-        # 5th, 10th, 15th... → landing page with Mondiad ads
+    frequency = storage.get_gateway_frequency()
+    if count % frequency == 0:
         return f"{GITHUB_PAGE}?c={code}", True
     else:
-        # All others → direct
         return f"https://nhentai.net/g/{code}/", False
 
 
-async def is_subscribed(bot, user_id):
+async def maybe_show_text_ad(update: Update, context):
+    """
+    Storage-backed replacement for the old Ads.py pool.
+    Picks an enabled ad if this user's pool cooldown has passed, sends it
+    (text, or photo/video + caption), and returns True if one was shown.
+    """
+    user_id = update.effective_user.id
+    ad = storage.pick_text_ad_for_user(user_id)
+    if not ad:
+        return False
+
+    caption = f"{ad['headline']}\n{ad['body']}"
+    reply_markup = None
+    if ad.get("button_text") and ad.get("button_url"):
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(ad["button_text"], url=ad["button_url"])]])
+
+    target_message = update.effective_message
+    try:
+        if ad.get("media_file_id"):
+            if ad["media_type"] == "photo":
+                await target_message.reply_photo(
+                    ad["media_file_id"], caption=caption, parse_mode="Markdown",
+                    reply_markup=reply_markup, protect_content=True
+                )
+            else:
+                await target_message.reply_video(
+                    ad["media_file_id"], caption=caption, parse_mode="Markdown",
+                    reply_markup=reply_markup, protect_content=True
+                )
+        else:
+            await target_message.reply_text(
+                caption, parse_mode="Markdown", reply_markup=reply_markup, protect_content=True
+            )
+    except Exception as e:
+        print(f"[ads] Failed to send text ad: {e}")
+        return False
+
+    await storage.mark_text_ad_shown(user_id)
+    return True
     for channel in REQUIRED_CHANNELS:
         try:
             member = await bot.get_chat_member(f"@{channel}", user_id)
@@ -115,7 +152,7 @@ async def deliver_comic(update: Update, context, user_id, code):
         protect_content=False
     )
 
-    shown = await maybe_show_ads(update)
+    shown = await maybe_show_text_ad(update, context)
     if shown:
         await storage.log_text_ad_view(user_id)
 
@@ -214,8 +251,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN PANEL — inline-button menu system, only visible/usable to ADMIN_IDS
 # ═══════════════════════════════════════════════════════════════════
 
+import uuid
+
+BASE_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}"
+
 # Conversation states for the broadcast flow
-BC_AWAITING_MESSAGE, BC_AWAITING_TARGET_IDS = range(2)
+(
+    BC_AWAITING_MESSAGE,
+    BC_AWAITING_TARGET_IDS,
+    BC_AWAITING_BUTTON_CHOICE,
+    BC_AWAITING_BUTTON_TEXT,
+    BC_AWAITING_BUTTON_URL,
+    BC_AWAITING_SEND_TIMING,
+    BC_AWAITING_SCHEDULE_TIME,
+) = range(7)
 
 
 def is_admin(user_id):
@@ -226,6 +275,9 @@ def admin_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Stats", callback_data="adm_stats")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast")],
+        [InlineKeyboardButton("🗓️ Scheduled Broadcasts", callback_data="adm_scheduled")],
+        [InlineKeyboardButton("📜 Broadcast History", callback_data="adm_history")],
+        [InlineKeyboardButton("📝 Ads Settings", callback_data="adm_ads_settings")],
         [InlineKeyboardButton("❌ Close", callback_data="adm_close")],
     ])
 
@@ -259,6 +311,22 @@ def broadcast_menu_keyboard():
 
 def cancel_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data="adm_root")]])
+
+
+def yes_no_keyboard(yes_data, no_data):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Yes", callback_data=yes_data),
+         InlineKeyboardButton("🚫 No", callback_data=no_data)],
+        [InlineKeyboardButton("🔙 Cancel", callback_data="adm_root")],
+    ])
+
+
+def timing_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚀 Send Now", callback_data="bc_time_now")],
+        [InlineKeyboardButton("🗓️ Schedule for Later", callback_data="bc_time_later")],
+        [InlineKeyboardButton("🔙 Cancel", callback_data="adm_root")],
+    ])
 
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -334,8 +402,65 @@ async def admin_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📢 *Broadcast Menu*", parse_mode="Markdown", reply_markup=broadcast_menu_keyboard()
         )
 
+    elif data == "adm_history":
+        recent = storage.get_recent_broadcasts(limit=10)
+        if not recent:
+            text = "📜 *Broadcast History*\n\nNo broadcasts sent yet."
+        else:
+            lines = ["📜 *Broadcast History* (most recent first)\n"]
+            for b in recent:
+                lines.append(
+                    f"🕐 {b['ts']}\n"
+                    f"   Sent: {b['sent']} | Failed: {b['failed']} | Clicks: {b['clicks']}\n"
+                    f"   \"{b['preview']}\""
+                )
+            text = "\n\n".join(lines)
+        await query.message.edit_text(
+            text, parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="adm_root")]])
+        )
 
-# ── Broadcast conversation (multi-step: pick target → send message → confirm) ──
+    elif data == "adm_scheduled":
+        pending = storage.get_pending_scheduled_broadcasts()
+        if not pending:
+            text = "🗓️ *Scheduled Broadcasts*\n\nNothing scheduled right now."
+            kb = [[InlineKeyboardButton("🔙 Back", callback_data="adm_root")]]
+        else:
+            lines = ["🗓️ *Scheduled Broadcasts*\n"]
+            kb = []
+            for b in pending:
+                target_desc = "Everyone" if b["target"] == "all" else f"{len(b['target'])} specific user(s)"
+                preview = (b.get("text") or b.get("caption") or "")[:40]
+                lines.append(f"🕐 {b['run_at']} → {target_desc}\n   \"{preview}\"")
+                kb.append([InlineKeyboardButton(f"❌ Cancel: {b['run_at']}", callback_data=f"adm_unschedule_{b['id']}")])
+            kb.append([InlineKeyboardButton("🔙 Back", callback_data="adm_root")])
+            text = "\n\n".join(lines)
+        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data.startswith("adm_unschedule_"):
+        broadcast_id = data.replace("adm_unschedule_", "")
+        await storage.remove_scheduled_broadcast(broadcast_id)
+        await query.answer("Cancelled.", show_alert=False)
+        # Re-render the scheduled list
+        pending = storage.get_pending_scheduled_broadcasts()
+        if not pending:
+            text = "🗓️ *Scheduled Broadcasts*\n\nNothing scheduled right now."
+            kb = [[InlineKeyboardButton("🔙 Back", callback_data="adm_root")]]
+        else:
+            lines = ["🗓️ *Scheduled Broadcasts*\n"]
+            kb = []
+            for b in pending:
+                target_desc = "Everyone" if b["target"] == "all" else f"{len(b['target'])} specific user(s)"
+                preview = (b.get("text") or b.get("caption") or "")[:40]
+                lines.append(f"🕐 {b['run_at']} → {target_desc}\n   \"{preview}\"")
+                kb.append([InlineKeyboardButton(f"❌ Cancel: {b['run_at']}", callback_data=f"adm_unschedule_{b['id']}")])
+            kb.append([InlineKeyboardButton("🔙 Back", callback_data="adm_root")])
+            text = "\n\n".join(lines)
+        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+# ── Broadcast conversation ──
+# Flow: pick target -> compose message -> optional button+link -> send now / schedule
 
 async def bc_start_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -343,6 +468,7 @@ async def bc_start_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Not authorized.", show_alert=True)
         return ConversationHandler.END
     await query.answer()
+    context.user_data.clear()
     context.user_data["bc_target"] = "all"
     await query.message.edit_text(
         "📤 *Broadcasting to Everyone*\n\n"
@@ -362,6 +488,7 @@ async def bc_start_specific(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Not authorized.", show_alert=True)
         return ConversationHandler.END
     await query.answer()
+    context.user_data.clear()
     context.user_data["bc_target"] = "specific"
     await query.message.edit_text(
         "🎯 *Broadcast to Specific Users*\n\n"
@@ -402,55 +529,145 @@ async def bc_receive_target_ids(update: Update, context: ContextTypes.DEFAULT_TY
     return BC_AWAITING_MESSAGE
 
 
-async def bc_receive_message_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def bc_receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stores the composed message, then asks whether to attach a tracked button."""
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
 
-    target = context.user_data.get("bc_target")
-    if target == "all":
-        target_ids = storage.get_all_user_ids()
-    else:
-        target_ids = context.user_data.get("bc_ids", [])
-
-    if not target_ids:
-        await update.message.reply_text("⚠️ No recipients found. Cancelling.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    photo_file_id = None
-    caption_template = None
-    text_template = None
-
     if update.message.photo:
-        photo_file_id = update.message.photo[-1].file_id
-        caption_template = update.message.caption or ""
+        context.user_data["bc_photo_file_id"] = update.message.photo[-1].file_id
+        context.user_data["bc_caption"] = update.message.caption or ""
+        context.user_data["bc_text"] = None
     elif update.message.text:
-        text_template = update.message.text
+        context.user_data["bc_text"] = update.message.text
+        context.user_data["bc_photo_file_id"] = None
+        context.user_data["bc_caption"] = None
     else:
         await update.message.reply_text("⚠️ Please send text or a photo with caption.")
         return BC_AWAITING_MESSAGE
 
-    status_msg = await update.message.reply_text(f"📣 Sending to {len(target_ids)} user(s)...")
+    await update.message.reply_text(
+        "🔗 *Add a link button to this broadcast?*\n\n"
+        "This lets you track how many people tap it (click analytics).",
+        parse_mode="Markdown",
+        reply_markup=yes_no_keyboard("bc_button_yes", "bc_button_no")
+    )
+    return BC_AWAITING_BUTTON_CHOICE
 
-    sent, failed = 0, 0
-    for uid in target_ids:
-        try:
-            name = storage.get_display_name(uid)
-            if photo_file_id is not None:
-                caption = caption_template.replace("{name}", name) if caption_template else None
-                await context.bot.send_photo(
-                    chat_id=uid, photo=photo_file_id, caption=caption, parse_mode="Markdown"
-                )
-            else:
-                personalized = text_template.replace("{name}", name)
-                await context.bot.send_message(chat_id=uid, text=personalized, parse_mode="Markdown")
-            sent += 1
-        except Exception:
-            failed += 1
-        await asyncio.sleep(0.05)  # ~20 msgs/sec, safely under Telegram's rate limit
 
-    await status_msg.edit_text(
-        f"✅ Broadcast complete.\nSent: {sent}\nFailed (blocked bot / left, etc): {failed}"
+async def bc_button_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        await query.answer("Not authorized.", show_alert=True)
+        return ConversationHandler.END
+    await query.answer()
+
+    if query.data == "bc_button_yes":
+        await query.message.edit_text(
+            "Send me the *button label* (short text shown on the button).\nExample: `📖 Read Now`",
+            parse_mode="Markdown",
+            reply_markup=cancel_keyboard()
+        )
+        return BC_AWAITING_BUTTON_TEXT
+    else:
+        context.user_data["bc_button_text"] = None
+        context.user_data["bc_button_url"] = None
+        await query.message.edit_text(
+            "⏱️ *When should this be sent?*",
+            parse_mode="Markdown",
+            reply_markup=timing_keyboard()
+        )
+        return BC_AWAITING_SEND_TIMING
+
+
+async def bc_receive_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    context.user_data["bc_button_text"] = update.message.text.strip()
+    await update.message.reply_text(
+        "Now send me the *URL* this button should link to.\nExample: `https://t.me/ArcComic`",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard()
+    )
+    return BC_AWAITING_BUTTON_URL
+
+
+async def bc_receive_button_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    url = update.message.text.strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        await update.message.reply_text("⚠️ That doesn't look like a valid URL. Must start with http:// or https://")
+        return BC_AWAITING_BUTTON_URL
+    context.user_data["bc_button_url"] = url
+    await update.message.reply_text(
+        "⏱️ *When should this be sent?*",
+        parse_mode="Markdown",
+        reply_markup=timing_keyboard()
+    )
+    return BC_AWAITING_SEND_TIMING
+
+
+async def bc_send_timing_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        await query.answer("Not authorized.", show_alert=True)
+        return ConversationHandler.END
+    await query.answer()
+
+    if query.data == "bc_time_now":
+        await query.message.edit_text("📣 Sending now...")
+        await _execute_broadcast(context, chat_id_for_status=query.message.chat_id, bot=context.bot)
+        context.user_data.clear()
+        return ConversationHandler.END
+    else:
+        await query.message.edit_text(
+            "🗓️ *Schedule Broadcast*\n\n"
+            "Send me the exact date & time (24-hour format, your local time):\n"
+            "`YYYY-MM-DD HH:MM`\n\n"
+            "Example: `2026-08-20 14:30`",
+            parse_mode="Markdown",
+            reply_markup=cancel_keyboard()
+        )
+        return BC_AWAITING_SCHEDULE_TIME
+
+
+async def bc_receive_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    raw = update.message.text.strip()
+    try:
+        parsed = time.strptime(raw, "%Y-%m-%d %H:%M")
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Couldn't parse that. Use the exact format `YYYY-MM-DD HH:MM`, e.g. `2026-08-20 14:30`",
+            parse_mode="Markdown"
+        )
+        return BC_AWAITING_SCHEDULE_TIME
+
+    run_at = time.strftime("%Y-%m-%d %H:%M:00", parsed)
+    if run_at <= time.strftime("%Y-%m-%d %H:%M:%S"):
+        await update.message.reply_text("⚠️ That time is in the past. Send a future date/time.")
+        return BC_AWAITING_SCHEDULE_TIME
+
+    target = context.user_data.get("bc_target")
+    target_value = "all" if target == "all" else context.user_data.get("bc_ids", [])
+
+    entry = {
+        "id": uuid.uuid4().hex[:10],
+        "run_at": run_at,
+        "target": target_value,
+        "text": context.user_data.get("bc_text"),
+        "photo_file_id": context.user_data.get("bc_photo_file_id"),
+        "caption": context.user_data.get("bc_caption"),
+        "button_text": context.user_data.get("bc_button_text"),
+        "button_url": context.user_data.get("bc_button_url"),
+    }
+    await storage.add_scheduled_broadcast(entry)
+
+    await update.message.reply_text(
+        f"✅ Scheduled for *{run_at}*.\nYou can view/cancel it anytime from 🗓️ Scheduled Broadcasts in the admin menu.",
+        parse_mode="Markdown"
     )
     context.user_data.clear()
     return ConversationHandler.END
@@ -462,6 +679,62 @@ async def bc_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await query.message.edit_text("🛠️ *Admin Panel*", parse_mode="Markdown", reply_markup=admin_menu_keyboard())
     return ConversationHandler.END
+
+
+def build_broadcast_button(button_text, button_url, broadcast_id):
+    """Wraps the destination URL in our own /click redirect so we can count taps."""
+    if not button_text or not button_url:
+        return None
+    tracked_url = f"{BASE_URL}/click/{broadcast_id}?url={button_url}"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=tracked_url)]])
+
+
+async def _execute_broadcast(context, chat_id_for_status, bot):
+    """Sends a broadcast immediately using data staged in context.user_data. Used by both
+    the 'Send Now' path and the scheduler loop (via a lightweight shim)."""
+    ud = context.user_data
+    target = ud.get("bc_target")
+    target_ids = storage.get_all_user_ids() if target == "all" else ud.get("bc_ids", [])
+
+    if not target_ids:
+        await bot.send_message(chat_id_for_status, "⚠️ No recipients found. Cancelled.")
+        return
+
+    broadcast_id = uuid.uuid4().hex[:10]
+    reply_markup = build_broadcast_button(ud.get("bc_button_text"), ud.get("bc_button_url"), broadcast_id)
+
+    photo_file_id = ud.get("bc_photo_file_id")
+    caption_template = ud.get("bc_caption")
+    text_template = ud.get("bc_text")
+
+    sent, failed = 0, 0
+    for uid in target_ids:
+        try:
+            name = storage.get_display_name(uid)
+            if photo_file_id:
+                caption = caption_template.replace("{name}", name) if caption_template else None
+                await bot.send_photo(
+                    chat_id=uid, photo=photo_file_id, caption=caption,
+                    parse_mode="Markdown", reply_markup=reply_markup
+                )
+            else:
+                personalized = text_template.replace("{name}", name)
+                await bot.send_message(
+                    chat_id=uid, text=personalized, parse_mode="Markdown", reply_markup=reply_markup
+                )
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)  # ~20 msgs/sec, safely under Telegram's rate limit
+
+    preview = (text_template or caption_template or "")[:80]
+    await storage.record_broadcast_result(broadcast_id, sent, failed, preview)
+
+    await bot.send_message(
+        chat_id_for_status,
+        f"✅ Broadcast complete.\nSent: {sent}\nFailed (blocked bot / left, etc): {failed}"
+        + ("\n🔗 Click tracking is active for this broadcast." if reply_markup else "")
+    )
 
 
 broadcast_conversation = ConversationHandler(
@@ -476,12 +749,81 @@ broadcast_conversation = ConversationHandler(
         ],
         BC_AWAITING_MESSAGE: [
             CallbackQueryHandler(bc_cancel, pattern="^adm_root$"),
-            MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.PHOTO, bc_receive_message_and_send),
+            MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.PHOTO, bc_receive_message),
+        ],
+        BC_AWAITING_BUTTON_CHOICE: [
+            CallbackQueryHandler(bc_cancel, pattern="^adm_root$"),
+            CallbackQueryHandler(bc_button_choice, pattern="^bc_button_(yes|no)$"),
+        ],
+        BC_AWAITING_BUTTON_TEXT: [
+            CallbackQueryHandler(bc_cancel, pattern="^adm_root$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, bc_receive_button_text),
+        ],
+        BC_AWAITING_BUTTON_URL: [
+            CallbackQueryHandler(bc_cancel, pattern="^adm_root$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, bc_receive_button_url),
+        ],
+        BC_AWAITING_SEND_TIMING: [
+            CallbackQueryHandler(bc_cancel, pattern="^adm_root$"),
+            CallbackQueryHandler(bc_send_timing_choice, pattern="^bc_time_(now|later)$"),
+        ],
+        BC_AWAITING_SCHEDULE_TIME: [
+            CallbackQueryHandler(bc_cancel, pattern="^adm_root$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, bc_receive_schedule_time),
         ],
     },
     fallbacks=[CallbackQueryHandler(bc_cancel, pattern="^adm_root$")],
     per_message=False,
 )
+
+
+# ── Background scheduler loop: checks every 60s for due scheduled broadcasts ──
+
+async def scheduler_loop(bot):
+    while True:
+        try:
+            due = storage.get_due_scheduled_broadcasts()
+            for entry in due:
+                target_ids = storage.get_all_user_ids() if entry["target"] == "all" else entry["target"]
+                broadcast_id = entry["id"]
+                reply_markup = build_broadcast_button(entry.get("button_text"), entry.get("button_url"), broadcast_id)
+
+                sent, failed = 0, 0
+                for uid in target_ids:
+                    try:
+                        name = storage.get_display_name(uid)
+                        if entry.get("photo_file_id"):
+                            caption = entry["caption"].replace("{name}", name) if entry.get("caption") else None
+                            await bot.send_photo(
+                                chat_id=uid, photo=entry["photo_file_id"], caption=caption,
+                                parse_mode="Markdown", reply_markup=reply_markup
+                            )
+                        else:
+                            personalized = (entry.get("text") or "").replace("{name}", name)
+                            await bot.send_message(
+                                chat_id=uid, text=personalized, parse_mode="Markdown", reply_markup=reply_markup
+                            )
+                        sent += 1
+                    except Exception:
+                        failed += 1
+                    await asyncio.sleep(0.05)
+
+                preview = (entry.get("text") or entry.get("caption") or "")[:80]
+                await storage.record_broadcast_result(broadcast_id, sent, failed, preview)
+                await storage.remove_scheduled_broadcast(broadcast_id)
+
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            admin_id,
+                            f"✅ Scheduled broadcast sent.\nSent: {sent}\nFailed: {failed}"
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[scheduler] Error: {e}")
+
+        await asyncio.sleep(60)  # check once a minute
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -490,7 +832,15 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin_command))
 app.add_handler(broadcast_conversation)
+app.add_handler(ads_manager.build_text_ad_conversation())
+app.add_handler(ads_manager.build_text_ad_freq_conversation())
+app.add_handler(ads_manager.build_big_ad_conversation())
+app.add_handler(ads_manager.build_gateway_freq_conversation())
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="^joined$"))
+app.add_handler(CallbackQueryHandler(
+    lambda u, c: ads_manager.ads_router(u, c, ADMIN_IDS),
+    pattern="^(ta_|ba_|gw_|adm_ads_settings)"
+))
 app.add_handler(CallbackQueryHandler(admin_menu_router, pattern="^adm_"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -508,8 +858,40 @@ async def telegram_webhook(request):
     return web.Response(text="OK")
 
 
+async def click_redirect(request):
+    """
+    Tracked-link redirect for broadcast buttons.
+    /click/<broadcast_id>?url=<real destination>
+    Logs the click then 302-redirects the user to the real URL.
+    """
+    broadcast_id = request.match_info.get("broadcast_id")
+    real_url = request.query.get("url")
+    if not real_url:
+        return web.Response(status=400, text="Missing url parameter")
+
+    # We don't have a reliable Telegram user_id here (this is a plain HTTP click,
+    # not a bot update), so we log the click anonymously against the broadcast.
+    await storage.log_click(broadcast_id, user_id=0)
+
+    raise web.HTTPFound(location=real_url)
+
+
+async def big_ad_click_redirect(request):
+    """
+    Tracked-link redirect for Big Ad buttons.
+    /bigadclick/<big_ad_id>?url=<real destination>
+    """
+    big_ad_id = request.match_info.get("big_ad_id")
+    real_url = request.query.get("url")
+    if not real_url:
+        return web.Response(status=400, text="Missing url parameter")
+
+    await storage.log_big_ad_click(big_ad_id)
+    raise web.HTTPFound(location=real_url)
+
+
 async def main():
-    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    webhook_url = f"{BASE_URL}/webhook"
 
     await storage.load_users()
     await app.bot.set_webhook(url=webhook_url)
@@ -517,6 +899,8 @@ async def main():
     aio_app = web.Application()
     aio_app.router.add_get("/healthz", healthz)
     aio_app.router.add_post("/webhook", telegram_webhook)
+    aio_app.router.add_get("/click/{broadcast_id}", click_redirect)
+    aio_app.router.add_get("/bigadclick/{big_ad_id}", big_ad_click_redirect)
 
     runner = web.AppRunner(aio_app)
     await runner.setup()
@@ -525,7 +909,9 @@ async def main():
 
     async with app:
         await app.start()
-        print(f"Bot is running. Webhook: {webhook_url}  Health check: /healthz")
+        asyncio.create_task(scheduler_loop(app.bot))
+        asyncio.create_task(ads_manager.big_ad_scheduler_loop(app.bot, storage.get_all_user_ids, BASE_URL))
+        print(f"Bot is running. Webhook: {webhook_url}  Health check: /healthz  Schedulers: active")
         await asyncio.Event().wait()  # run forever
         await app.stop()
 
