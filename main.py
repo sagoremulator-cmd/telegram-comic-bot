@@ -90,6 +90,9 @@ async def maybe_show_text_ad(update: Update, context):
 
     await storage.mark_text_ad_shown(user_id)
     return True
+
+
+async def is_subscribed(bot, user_id):
     for channel in REQUIRED_CHANNELS:
         try:
             member = await bot.get_chat_member(f"@{channel}", user_id)
