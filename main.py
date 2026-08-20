@@ -374,6 +374,13 @@ LEGACY_ADS = [
 ]
 
 
+def _strip_markdown_chars(text):
+    """Removes characters that break Telegram's legacy Markdown parser if unbalanced."""
+    for ch in ["*", "_", "`", "["]:
+        text = text.replace(ch, "")
+    return text.strip()
+
+
 async def migrate_legacy_ads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /migrate_ads — one-time command to import the old hardcoded Ads.py list into the
@@ -388,12 +395,13 @@ async def migrate_legacy_ads_command(update: Update, context: ContextTypes.DEFAU
     skipped = 0
 
     for legacy in LEGACY_ADS:
-        if legacy["headline"] in existing_headlines:
+        clean_headline = _strip_markdown_chars(legacy["headline"])
+        if clean_headline in existing_headlines:
             skipped += 1
             continue
         await storage.add_text_ad({
-            "headline": legacy["headline"],
-            "body": legacy["body"],
+            "headline": clean_headline,
+            "body": _strip_markdown_chars(legacy["body"]),
             "media_file_id": None,
             "media_type": None,
             "button_text": legacy["button_text"],
@@ -404,6 +412,40 @@ async def migrate_legacy_ads_command(update: Update, context: ContextTypes.DEFAU
     await update.message.reply_text(
         f"✅ Migration complete.\nImported: {imported}\nSkipped (already present): {skipped}\n\n"
         f"Check them in /admin → 📝 Ads Settings → 📋 Text Ads (pool)."
+    )
+
+
+async def fix_ads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /fix_ads — one-time cleanup for ads already saved with broken Markdown characters
+    (e.g. stray '*' from the original migration) that caused them to fail to open.
+    Also removes exact duplicate ads (same cleaned headline).
+    """
+    if not is_admin(update.effective_user.id):
+        return
+
+    all_ads = storage.get_all_text_ads()
+    seen_headlines = set()
+    fixed = 0
+    removed_dupes = 0
+
+    for ad in list(all_ads):
+        clean_headline = _strip_markdown_chars(ad["headline"])
+        clean_body = _strip_markdown_chars(ad["body"])
+
+        if clean_headline in seen_headlines:
+            await storage.delete_text_ad(ad["id"])
+            removed_dupes += 1
+            continue
+
+        seen_headlines.add(clean_headline)
+        if clean_headline != ad["headline"] or clean_body != ad["body"]:
+            await storage.update_text_ad(ad["id"], headline=clean_headline, body=clean_body)
+            fixed += 1
+
+    await update.message.reply_text(
+        f"✅ Cleanup complete.\nFixed broken text: {fixed}\nRemoved duplicates: {removed_dupes}\n\n"
+        f"Check /admin → 📝 Ads Settings → 📋 Text Ads (pool) — all should open now."
     )
 
 
@@ -903,6 +945,7 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin_command))
 app.add_handler(CommandHandler("migrate_ads", migrate_legacy_ads_command))
+app.add_handler(CommandHandler("fix_ads", fix_ads_command))
 app.add_handler(broadcast_conversation)
 app.add_handler(ads_manager.build_text_ad_conversation())
 app.add_handler(ads_manager.build_text_ad_freq_conversation())

@@ -161,7 +161,14 @@ async def ads_router(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         ad_id = data.replace("ta_view_", "")
         ad = storage.get_text_ad(ad_id)
         if not ad:
-            await query.message.edit_text("Ad not found (maybe deleted).", reply_markup=ta_menu_keyboard())
+            print(f"[ads_manager] ta_view_ requested unknown ad_id: {ad_id!r}. "
+                  f"Known ids: {[a['id'] for a in storage.get_all_text_ads()]}")
+            await query.message.edit_text(
+                f"⚠️ Ad not found (id: {ad_id}).\nIt may have been deleted, or is a "
+                f"duplicate from an earlier migration run. Try /migrate_ads again or "
+                f"delete this stale entry from the list.",
+                reply_markup=ta_menu_keyboard()
+            )
             return
         status = "✅ Enabled" if ad.get("enabled") else "🚫 Disabled"
         media_desc = ad.get("media_type", "none") or "none"
@@ -171,7 +178,12 @@ async def ads_router(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
             f"Media: {media_desc}\n"
             f"Button: {ad.get('button_text') or '(none)'} → {ad.get('button_url') or '(none)'}"
         )
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=ta_manage_keyboard(ad_id))
+        try:
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=ta_manage_keyboard(ad_id))
+        except Exception as e:
+            print(f"[ads_manager] Failed to render ta_view_ for {ad_id}: {e}")
+            # Markdown parse failure (e.g. unescaped * in headline/body) — retry without parse_mode
+            await query.message.edit_text(text, reply_markup=ta_manage_keyboard(ad_id))
 
     elif data.startswith("ta_toggle_"):
         ad_id = data.replace("ta_toggle_", "")
