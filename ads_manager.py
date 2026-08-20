@@ -7,6 +7,7 @@ Admin UI + conversation flows for:
 All data is persisted via storage.py (Gist-backed), so nothing here is lost on redeploy.
 """
 
+import os
 import asyncio
 import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -15,6 +16,42 @@ from telegram.ext import (
 )
 
 import storage
+
+# Private channel used as a durable, reliable backing store for ad media.
+# We copy every uploaded ad photo/video here once, and use THIS copy's file_id
+# for all future sends — protects against the (rare) case where a file_id tied
+# only to an admin's personal chat with the bot becomes unusable later.
+STORAGE_CHANNEL_ID = int(os.getenv("LIBRARY_CHANNEL_ID", "-1003906982358"))
+
+
+async def _archive_media_to_channel(bot, message):
+    """
+    Forwards an incoming photo/video message into the private storage channel.
+    forward_message returns a full Message object (unlike copy_message, which only
+    returns a bare MessageId) — so we can read back a fresh, durable file_id from
+    the forwarded copy sitting permanently in the channel.
+    Falls back to the original file_id if forwarding fails for any reason (e.g.
+    missing bot permissions), so ad creation never breaks even if archiving does.
+    """
+    try:
+        forwarded = await bot.forward_message(
+            chat_id=STORAGE_CHANNEL_ID,
+            from_chat_id=message.chat_id,
+            message_id=message.message_id,
+        )
+        if forwarded.photo:
+            return forwarded.photo[-1].file_id, "photo"
+        elif forwarded.video:
+            return forwarded.video.file_id, "video"
+    except Exception as e:
+        print(f"[ads_manager] Failed to archive media to storage channel: {e}")
+
+    # Fallback: use the original file_id if archiving didn't work
+    if message.photo:
+        return message.photo[-1].file_id, "photo"
+    elif message.video:
+        return message.video.file_id, "video"
+    return None, None
 
 WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -286,15 +323,13 @@ async def ad_media_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def ad_receive_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.photo:
-        context.user_data["ad_draft"]["media_file_id"] = update.message.photo[-1].file_id
-        context.user_data["ad_draft"]["media_type"] = "photo"
-    elif update.message.video:
-        context.user_data["ad_draft"]["media_file_id"] = update.message.video.file_id
-        context.user_data["ad_draft"]["media_type"] = "video"
-    else:
+    if not (update.message.photo or update.message.video):
         await update.message.reply_text("⚠️ Please send a photo or video.")
         return AD_AWAITING_MEDIA
+
+    file_id, media_type = await _archive_media_to_channel(context.bot, update.message)
+    context.user_data["ad_draft"]["media_file_id"] = file_id
+    context.user_data["ad_draft"]["media_type"] = media_type
 
     await update.message.reply_text(
         "Send the *button label*.\nExample: `Join Now`",
@@ -449,15 +484,14 @@ async def bigad_media_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def bigad_receive_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.photo:
-        context.user_data["ad_draft"]["media_file_id"] = update.message.photo[-1].file_id
-        context.user_data["ad_draft"]["media_type"] = "photo"
-    elif update.message.video:
-        context.user_data["ad_draft"]["media_file_id"] = update.message.video.file_id
-        context.user_data["ad_draft"]["media_type"] = "video"
-    else:
+    if not (update.message.photo or update.message.video):
         await update.message.reply_text("⚠️ Please send a photo or video.")
         return AD_AWAITING_MEDIA
+
+    file_id, media_type = await _archive_media_to_channel(context.bot, update.message)
+    context.user_data["ad_draft"]["media_file_id"] = file_id
+    context.user_data["ad_draft"]["media_type"] = media_type
+
     await update.message.reply_text(
         "Send the *button label*.", parse_mode="Markdown", reply_markup=cancel_kb("ba_menu")
     )
