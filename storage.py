@@ -83,6 +83,7 @@ async def load_users():
     global BROADCAST_HISTORY, SCHEDULED_BROADCASTS, CLICK_EVENTS
     global TEXT_ADS, TEXT_ADS_FREQUENCY_HOURS, TEXT_ADS_LAST_SHOWN
     global BIG_ADS, BIG_AD_SENDS, BIG_AD_CLICKS, GATEWAY_FREQUENCY
+    global REQUIRED_CHANNELS_LIST
     async with httpx.AsyncClient() as client:
         resp = await client.get(GITHUB_API, headers=HEADERS, timeout=15)
         resp.raise_for_status()
@@ -102,6 +103,7 @@ async def load_users():
         BIG_AD_SENDS = parsed.get("big_ad_sends", [])
         BIG_AD_CLICKS = parsed.get("big_ad_clicks", [])
         GATEWAY_FREQUENCY = parsed.get("gateway_frequency", 5)
+        REQUIRED_CHANNELS_LIST = parsed.get("required_channels", [])
     print(f"[storage] Loaded {len(USERS_CACHE)} users, "
           f"{len(GATEWAY_VIEWS)} gateway views, {len(TEXT_AD_VIEWS)} text ad views, "
           f"{len(BROADCAST_HISTORY)} past broadcasts, {len(SCHEDULED_BROADCASTS)} scheduled, "
@@ -128,6 +130,7 @@ async def _save_all():
                     "big_ad_sends": BIG_AD_SENDS,
                     "big_ad_clicks": BIG_AD_CLICKS,
                     "gateway_frequency": GATEWAY_FREQUENCY,
+                    "required_channels": REQUIRED_CHANNELS_LIST,
                 }, indent=2)
             }
         }
@@ -498,3 +501,44 @@ async def set_gateway_frequency(n):
 
 def get_gateway_frequency():
     return GATEWAY_FREQUENCY
+
+
+# ── Mandatory Channels (join-to-use gate) ──
+# REQUIRED_CHANNELS_LIST: [{"id", "display_name", "username", "invite_link", "emoji"}, ...]
+# `username` (without @) is used for get_chat_member membership checks. `invite_link`
+# is what's shown as the join button. If username is empty (private channel with no
+# public handle), membership can't be verified automatically — see notes in main.py.
+REQUIRED_CHANNELS_LIST = []
+
+
+async def add_required_channel(channel):
+    channel["id"] = channel.get("id") or _new_id()
+    REQUIRED_CHANNELS_LIST.append(channel)
+    await _save_all()
+    return channel["id"]
+
+
+async def update_required_channel(channel_id, **fields):
+    for ch in REQUIRED_CHANNELS_LIST:
+        if ch["id"] == channel_id:
+            ch.update(fields)
+            await _save_all()
+            return True
+    return False
+
+
+async def remove_required_channel(channel_id):
+    global REQUIRED_CHANNELS_LIST
+    REQUIRED_CHANNELS_LIST = [c for c in REQUIRED_CHANNELS_LIST if c["id"] != channel_id]
+    await _save_all()
+
+
+def get_required_channel(channel_id):
+    for ch in REQUIRED_CHANNELS_LIST:
+        if ch["id"] == channel_id:
+            return ch
+    return None
+
+
+def get_all_required_channels():
+    return list(REQUIRED_CHANNELS_LIST)

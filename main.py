@@ -11,19 +11,22 @@ from telegram.ext import (
 
 import storage
 import ads_manager
+import channels_manager
 
 TOKEN = os.getenv("TOKEN")
 PORT = int(os.environ.get("PORT", 5000))
 
 ADMIN_IDS = {5083713667}
-REQUIRED_CHANNELS = ["Ai39k", "ArcComic", "QuickAid", "BrainRage"]
 
-CHANNEL_LINKS = {
-    "Emma": "https://t.me/+aLdg5hhj0j8zMWU1",
-    "Arc Comics": "https://t.me/+VG9pG6hW78E2NWU1",
-    "QuickAid Comics": "https://t.me/+MjgFpHIjrZgxZTg9",
-    "BrainRage ✨": "https://t.me/+UYWqbGQc9kdiNjk1"
-}
+# Legacy hardcoded channel data — no longer used directly (channels now live in the
+# Gist via storage.py), kept here only as the source for the one-time /migrate_channels
+# command so the 4 original channels can be imported into the new editable system.
+LEGACY_CHANNELS = [
+    {"display_name": "Emma", "username": "Ai39k", "invite_link": "https://t.me/+aLdg5hhj0j8zMWU1", "emoji": "📌"},
+    {"display_name": "Arc Comics", "username": "ArcComic", "invite_link": "https://t.me/+VG9pG6hW78E2NWU1", "emoji": "📌"},
+    {"display_name": "QuickAid Comics", "username": "QuickAid", "invite_link": "https://t.me/+MjgFpHIjrZgxZTg9", "emoji": "📌"},
+    {"display_name": "BrainRage ✨", "username": "BrainRage", "invite_link": "https://t.me/+UYWqbGQc9kdiNjk1", "emoji": "✨"},
+]
 
 # Landing pages
 GITHUB_PAGE  = "https://jizzybx.github.io/linkgateway/comic.html"  # Mondiad ads
@@ -72,30 +75,56 @@ async def maybe_show_text_ad(update: Update, context):
         if ad.get("media_file_id"):
             if ad["media_type"] == "photo":
                 await target_message.reply_photo(
-                    ad["media_file_id"], caption=caption, parse_mode="Markdown",
+                    ad["media_file_id"], caption=caption, parse_mode="MarkdownV2",
                     reply_markup=reply_markup, protect_content=True
                 )
             else:
                 await target_message.reply_video(
-                    ad["media_file_id"], caption=caption, parse_mode="Markdown",
+                    ad["media_file_id"], caption=caption, parse_mode="MarkdownV2",
                     reply_markup=reply_markup, protect_content=True
                 )
         else:
             await target_message.reply_text(
-                caption, parse_mode="Markdown", reply_markup=reply_markup, protect_content=True
+                caption, parse_mode="MarkdownV2", reply_markup=reply_markup, protect_content=True
             )
     except Exception as e:
-        print(f"[ads] Failed to send text ad: {e}")
-        return False
+        print(f"[ads] MarkdownV2 send failed ({e}), retrying as plain text.")
+        try:
+            if ad.get("media_file_id"):
+                if ad["media_type"] == "photo":
+                    await target_message.reply_photo(
+                        ad["media_file_id"], caption=caption,
+                        reply_markup=reply_markup, protect_content=True
+                    )
+                else:
+                    await target_message.reply_video(
+                        ad["media_file_id"], caption=caption,
+                        reply_markup=reply_markup, protect_content=True
+                    )
+            else:
+                await target_message.reply_text(
+                    caption, reply_markup=reply_markup, protect_content=True
+                )
+        except Exception as e2:
+            print(f"[ads] Plain text fallback also failed: {e2}")
+            return False
 
     await storage.mark_text_ad_shown(user_id)
     return True
 
 
 async def is_subscribed(bot, user_id):
-    for channel in REQUIRED_CHANNELS:
+    channels = storage.get_all_required_channels()
+    for ch in channels:
+        username = ch.get("username")
+        if not username:
+            # No public @username on file — we can't verify membership for a
+            # private channel this way. Skip the check for this one rather than
+            # incorrectly blocking every user (admin should prefer public channels
+            # or channels the bot can check via chat_id if added that way).
+            continue
         try:
-            member = await bot.get_chat_member(f"@{channel}", user_id)
+            member = await bot.get_chat_member(f"@{username}", user_id)
             if member.status not in ["member", "administrator", "creator"]:
                 return False
         except:
@@ -105,15 +134,10 @@ async def is_subscribed(bot, user_id):
 
 async def build_join_keyboard(bot, user_id):
     keyboard = []
-    mapping = {
-        "Emma": "Ai39k",
-        "Arc Comics": "ArcComic",
-        "QuickAid Comics": "QuickAid",
-        "BrainRage ✨": "BrainRage"
-    }
-    for name, link in CHANNEL_LINKS.items():
-        username = mapping.get(name)
+    channels = storage.get_all_required_channels()
+    for ch in channels:
         tick = ""
+        username = ch.get("username")
         if username:
             try:
                 member = await bot.get_chat_member(f"@{username}", user_id)
@@ -121,17 +145,9 @@ async def build_join_keyboard(bot, user_id):
                     tick = " ✅"
             except:
                 pass
-        if "QuickAid" in name:
-            label = f"📌 {name}{tick}"
-        elif "Arc" in name:
-            label = f"📌 {name}{tick}"
-        elif "BrainRage" in name:
-            label = f"✨ {name}{tick}"
-        elif "Emma" in name:
-            label = f"📌 {name}{tick}"
-        else:
-            label = name + tick
-        keyboard.append([InlineKeyboardButton(label, url=link)])
+        emoji = ch.get("emoji") or "📌"
+        label = f"{emoji} {ch['display_name']}{tick}"
+        keyboard.append([InlineKeyboardButton(label, url=ch["invite_link"])])
     keyboard.append([InlineKeyboardButton("✅ I Joined", callback_data="joined")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -281,6 +297,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("🗓️ Scheduled Broadcasts", callback_data="adm_scheduled")],
         [InlineKeyboardButton("📜 Broadcast History", callback_data="adm_history")],
         [InlineKeyboardButton("📝 Ads Settings", callback_data="adm_ads_settings")],
+        [InlineKeyboardButton("📢 Mandatory Channels", callback_data="ch_menu")],
         [InlineKeyboardButton("❌ Close", callback_data="adm_close")],
     ])
 
@@ -446,6 +463,32 @@ async def fix_ads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ Cleanup complete.\nFixed broken text: {fixed}\nRemoved duplicates: {removed_dupes}\n\n"
         f"Check /admin → 📝 Ads Settings → 📋 Text Ads (pool) — all should open now."
+    )
+
+
+async def migrate_channels_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /migrate_channels — one-time command to import the original 4 hardcoded mandatory
+    channels into the new Gist-backed, admin-editable channel system. Safe to run
+    multiple times; skips channels already present (matched by username).
+    """
+    if not is_admin(update.effective_user.id):
+        return
+
+    existing_usernames = {c.get("username") for c in storage.get_all_required_channels()}
+    imported = 0
+    skipped = 0
+
+    for legacy in LEGACY_CHANNELS:
+        if legacy["username"] in existing_usernames:
+            skipped += 1
+            continue
+        await storage.add_required_channel(dict(legacy))
+        imported += 1
+
+    await update.message.reply_text(
+        f"✅ Channel migration complete.\nImported: {imported}\nSkipped (already present): {skipped}\n\n"
+        f"Check /admin → 📢 Mandatory Channels."
     )
 
 
@@ -946,15 +989,21 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin_command))
 app.add_handler(CommandHandler("migrate_ads", migrate_legacy_ads_command))
 app.add_handler(CommandHandler("fix_ads", fix_ads_command))
+app.add_handler(CommandHandler("migrate_channels", migrate_channels_command))
 app.add_handler(broadcast_conversation)
 app.add_handler(ads_manager.build_text_ad_conversation())
 app.add_handler(ads_manager.build_text_ad_freq_conversation())
 app.add_handler(ads_manager.build_big_ad_conversation())
 app.add_handler(ads_manager.build_gateway_freq_conversation())
+app.add_handler(channels_manager.build_channel_conversation())
 app.add_handler(CallbackQueryHandler(joined_callback, pattern="^joined$"))
 app.add_handler(CallbackQueryHandler(
     lambda u, c: ads_manager.ads_router(u, c, ADMIN_IDS),
     pattern="^(ta_|ba_|gw_|adm_ads_settings)"
+))
+app.add_handler(CallbackQueryHandler(
+    lambda u, c: channels_manager.channels_router(u, c, ADMIN_IDS),
+    pattern="^ch_"
 ))
 app.add_handler(CallbackQueryHandler(admin_menu_router, pattern="^adm_"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

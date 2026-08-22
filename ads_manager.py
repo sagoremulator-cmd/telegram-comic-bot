@@ -16,6 +16,7 @@ from telegram.ext import (
 )
 
 import storage
+import formatting
 
 # Private channel used as a durable, reliable backing store for ad media.
 # We copy every uploaded ad photo/video here once, and use THIS copy's file_id
@@ -300,9 +301,13 @@ async def ta_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def ad_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lines = update.message.text.strip().split("\n", 1)
-    headline = lines[0]
-    body = lines[1] if len(lines) > 1 else ""
+    raw_text = update.message.text
+    entities = update.message.entities
+    styled = formatting.entities_to_markdownv2(raw_text, entities)
+
+    lines = styled.split("\n", 1)
+    headline = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else ""
     context.user_data["ad_draft"]["headline"] = headline
     context.user_data["ad_draft"]["body"] = body
 
@@ -377,12 +382,12 @@ async def ad_receive_button_url(update: Update, context: ContextTypes.DEFAULT_TY
     if draft.get("media_file_id"):
         if draft["media_type"] == "photo":
             await update.message.reply_photo(draft["media_file_id"], caption=caption,
-                                              parse_mode="Markdown", reply_markup=preview_kb)
+                                              parse_mode="MarkdownV2", reply_markup=preview_kb)
         else:
             await update.message.reply_video(draft["media_file_id"], caption=caption,
-                                              parse_mode="Markdown", reply_markup=preview_kb)
+                                              parse_mode="MarkdownV2", reply_markup=preview_kb)
     else:
-        await update.message.reply_text(caption, parse_mode="Markdown", reply_markup=preview_kb)
+        await update.message.reply_text(caption, parse_mode="MarkdownV2", reply_markup=preview_kb)
 
     await update.message.reply_text(
         "☝️ *This is the preview.*\n\nSave this ad?",
@@ -469,9 +474,13 @@ async def ba_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bigad_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lines = update.message.text.strip().split("\n", 1)
-    context.user_data["ad_draft"]["headline"] = lines[0]
-    context.user_data["ad_draft"]["body"] = lines[1] if len(lines) > 1 else ""
+    raw_text = update.message.text
+    entities = update.message.entities
+    styled = formatting.entities_to_markdownv2(raw_text, entities)
+
+    lines = styled.split("\n", 1)
+    context.user_data["ad_draft"]["headline"] = lines[0].strip()
+    context.user_data["ad_draft"]["body"] = lines[1].strip() if len(lines) > 1 else ""
     await update.message.reply_text(
         "🖼️ *Attach a picture or video?*",
         parse_mode="Markdown",
@@ -602,17 +611,17 @@ async def bigad_minute_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
         sched_desc = f"Weekly on {WEEKDAY_NAMES[sched['weekday']]} at {sched['hour']:02d}:{sched['minute']:02d}"
 
     preview_kb = InlineKeyboardMarkup([[InlineKeyboardButton(draft["button_text"], url=draft["button_url"])]])
-    caption = render_ad_preview_text(draft) + f"\n\n🗓️ {sched_desc}"
+    caption = render_ad_preview_text(draft) + f"\n\n🗓️ {formatting._escape(sched_desc)}"
 
     if draft.get("media_file_id"):
         if draft["media_type"] == "photo":
             await query.message.reply_photo(draft["media_file_id"], caption=caption,
-                                             parse_mode="Markdown", reply_markup=preview_kb)
+                                             parse_mode="MarkdownV2", reply_markup=preview_kb)
         else:
             await query.message.reply_video(draft["media_file_id"], caption=caption,
-                                             parse_mode="Markdown", reply_markup=preview_kb)
+                                             parse_mode="MarkdownV2", reply_markup=preview_kb)
     else:
-        await query.message.reply_text(caption, parse_mode="Markdown", reply_markup=preview_kb)
+        await query.message.reply_text(caption, parse_mode="MarkdownV2", reply_markup=preview_kb)
 
     await query.message.reply_text(
         "☝️ *This is the preview.*\n\nSave this Big Ad?",
@@ -828,12 +837,12 @@ async def big_ad_scheduler_loop(bot, get_user_ids_fn, click_base_url):
                         if ad.get("media_file_id"):
                             if ad["media_type"] == "photo":
                                 await bot.send_photo(uid, ad["media_file_id"], caption=caption,
-                                                      parse_mode="Markdown", reply_markup=reply_markup)
+                                                      parse_mode="MarkdownV2", reply_markup=reply_markup)
                             else:
                                 await bot.send_video(uid, ad["media_file_id"], caption=caption,
-                                                      parse_mode="Markdown", reply_markup=reply_markup)
+                                                      parse_mode="MarkdownV2", reply_markup=reply_markup)
                         else:
-                            await bot.send_message(uid, caption, parse_mode="Markdown", reply_markup=reply_markup)
+                            await bot.send_message(uid, caption, parse_mode="MarkdownV2", reply_markup=reply_markup)
                         sent += 1
                     except Exception:
                         failed += 1
