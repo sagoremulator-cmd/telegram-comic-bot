@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import aiohttp
 from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -10,7 +11,6 @@ from telegram.ext import (
 )
 
 import json
-import requests
 
 import storage
 import ads_manager
@@ -59,23 +59,31 @@ def set_delivery_mode(mode):
     _save_dev_settings(settings)
 
 
-def code_json_exists(code):
+async def code_json_exists(code):
     """Fast existence check against GitHub Pages' public static URL
     (not the GitHub API — no rate limit that matters at real traffic
     volume, since Pages is CDN-backed). Subject to a short propagation
     delay right after comic.py pushes a new code.json — that's fine,
     since a False here just falls back to Normal-mode delivery for
-    that one request instead of failing the user."""
+    that one request instead of failing the user.
+
+    Uses aiohttp (already a dependency of this bot) rather than
+    requests, so this never needs a requirements.txt change and never
+    blocks the event loop the way a synchronous requests call would.
+    """
+    url = READER_DATA_CHECK_URL.format(code=code)
+    timeout = aiohttp.ClientTimeout(total=READER_CHECK_TIMEOUT)
     try:
-        r = requests.head(READER_DATA_CHECK_URL.format(code=code), timeout=READER_CHECK_TIMEOUT)
-        if r.status_code == 200:
-            return True
-        # Some static hosts don't implement HEAD reliably — fall back
-        # to a lightweight GET if HEAD is inconclusive.
-        if r.status_code == 405:
-            r2 = requests.get(READER_DATA_CHECK_URL.format(code=code), timeout=READER_CHECK_TIMEOUT)
-            return r2.status_code == 200
-        return False
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.head(url) as r:
+                if r.status == 200:
+                    return True
+                if r.status == 405:
+                    # Some static hosts don't implement HEAD reliably —
+                    # fall back to a lightweight GET if HEAD is inconclusive.
+                    async with session.get(url) as r2:
+                        return r2.status == 200
+                return False
     except Exception:
         # Network hiccup, timeout, DNS issue — treat as "not available",
         # which safely falls back to Normal mode rather than erroring
@@ -230,7 +238,7 @@ async def deliver_comic(update: Update, context, user_id, code):
     """
     is_gateway = False
 
-    if get_delivery_mode() == "page" and code_json_exists(code):
+    if get_delivery_mode() == "page" and await code_json_exists(code):
         url = f"{READER_BASE_URL}?code={code}"
     else:
         url, is_gateway = get_comic_url(user_id, code)
