@@ -1273,40 +1273,12 @@ async def direct_link_click_redirect(request):
     cfg = storage.get_direct_link_config()  # in-memory read, no network cost
     direct_url = cfg.get("url") or real_comic_url  # link cleared between send and click — just send them to their comic
 
-    # Redirect FIRST, log/edit in the background after. mark_direct_link_seen
-    # and log_direct_link_click each do a blocking GitHub Gist API write
-    # (storage._save_all()), and edit_message_text is its own Telegram API
-    # round-trip — doing all three before the redirect made the user visibly
-    # wait 3-4s staring at a blank page before the ad even started loading.
-    # None of these three affect what URL the user should land on, so none
-    # of them need to finish before we send them there.
-    asyncio.create_task(
-        _finish_direct_link_click(user_id_raw, chat_id_raw, message_id_raw, real_comic_url)
-    )
-
-    raise web.HTTPFound(location=direct_url)
-
-
-async def _finish_direct_link_click(user_id_raw, chat_id_raw, message_id_raw, real_comic_url):
-    """Background half of a Direct Link click: mark seen, log the click stat,
-    and flip the original message to the real comic button. Runs AFTER the
-    user has already been redirected — none of this should ever block them.
-    Each piece is independently best-effort: a failure in one (e.g. the edit,
-    if the message is too old/deleted) must not stop the others from running.
-    """
-    try:
-        user_id = int(user_id_raw)
-        await storage.mark_direct_link_seen(user_id)
-    except (TypeError, ValueError):
-        pass
-    except Exception as e:
-        print(f"[direct_link] Failed to mark seen: {e}")
-
-    try:
-        await storage.log_direct_link_click()
-    except Exception as e:
-        print(f"[direct_link] Failed to log click: {e}")
-
+    # The message-edit MUST happen before we redirect the user, not after —
+    # otherwise the user can bounce back from the ad and tap the (still-old)
+    # tracked button again before a background edit has landed, sending them
+    # through a second pointless redirect. This is a single Telegram API
+    # call, not the slow part, so awaiting it here costs a few hundred ms,
+    # not seconds — a fair trade for not needing a second tap.
     try:
         if chat_id_raw and message_id_raw:
             keyboard = InlineKeyboardMarkup(
@@ -1320,6 +1292,34 @@ async def _finish_direct_link_click(user_id_raw, chat_id_raw, message_id_raw, re
             )
     except Exception as e:
         print(f"[direct_link] Failed to edit message after click: {e}")
+
+    # mark_direct_link_seen and log_direct_link_click each do a blocking
+    # GitHub Gist API write (storage._save_all()) — THIS is the actually
+    # slow part (the 3-4s from before), and neither one affects what URL
+    # the user lands on, so push both to the background after the edit.
+    asyncio.create_task(_finish_direct_link_click(user_id_raw))
+
+    raise web.HTTPFound(location=direct_url)
+
+
+async def _finish_direct_link_click(user_id_raw):
+    """Background half of a Direct Link click: mark seen + log the click
+    stat. Runs after the message has already been edited and the user is
+    already on their way to the ad link — purely bookkeeping from here,
+    nothing the user is waiting on. Each piece is independently best-effort.
+    """
+    try:
+        user_id = int(user_id_raw)
+        await storage.mark_direct_link_seen(user_id)
+    except (TypeError, ValueError):
+        pass
+    except Exception as e:
+        print(f"[direct_link] Failed to mark seen: {e}")
+
+    try:
+        await storage.log_direct_link_click()
+    except Exception as e:
+        print(f"[direct_link] Failed to log click: {e}")
 
 
 async def main():
