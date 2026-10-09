@@ -1270,21 +1270,43 @@ async def direct_link_click_redirect(request):
     # so this is the final real URL as-sent — no further unquote needed.
     real_comic_url = request.query.get("realurl") or (f"https://nhentai.net/g/{code}/" if code else "https://nhentai.net/")
 
-    cfg = storage.get_direct_link_config()
+    cfg = storage.get_direct_link_config()  # in-memory read, no network cost
     direct_url = cfg.get("url") or real_comic_url  # link cleared between send and click — just send them to their comic
 
+    # Redirect FIRST, log/edit in the background after. mark_direct_link_seen
+    # and log_direct_link_click each do a blocking GitHub Gist API write
+    # (storage._save_all()), and edit_message_text is its own Telegram API
+    # round-trip — doing all three before the redirect made the user visibly
+    # wait 3-4s staring at a blank page before the ad even started loading.
+    # None of these three affect what URL the user should land on, so none
+    # of them need to finish before we send them there.
+    asyncio.create_task(
+        _finish_direct_link_click(user_id_raw, chat_id_raw, message_id_raw, real_comic_url)
+    )
+
+    raise web.HTTPFound(location=direct_url)
+
+
+async def _finish_direct_link_click(user_id_raw, chat_id_raw, message_id_raw, real_comic_url):
+    """Background half of a Direct Link click: mark seen, log the click stat,
+    and flip the original message to the real comic button. Runs AFTER the
+    user has already been redirected — none of this should ever block them.
+    Each piece is independently best-effort: a failure in one (e.g. the edit,
+    if the message is too old/deleted) must not stop the others from running.
+    """
     try:
         user_id = int(user_id_raw)
         await storage.mark_direct_link_seen(user_id)
     except (TypeError, ValueError):
         pass
+    except Exception as e:
+        print(f"[direct_link] Failed to mark seen: {e}")
 
-    await storage.log_direct_link_click()
+    try:
+        await storage.log_direct_link_click()
+    except Exception as e:
+        print(f"[direct_link] Failed to log click: {e}")
 
-    # Flip the original message over to the real comic link. Best-effort —
-    # if this fails (message deleted, too old, etc.) the user still reaches
-    # their comic via the redirect below; they just won't see the swapped
-    # button afterward.
     try:
         if chat_id_raw and message_id_raw:
             keyboard = InlineKeyboardMarkup(
@@ -1298,8 +1320,6 @@ async def direct_link_click_redirect(request):
             )
     except Exception as e:
         print(f"[direct_link] Failed to edit message after click: {e}")
-
-    raise web.HTTPFound(location=direct_url)
 
 
 async def main():

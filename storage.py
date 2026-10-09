@@ -604,7 +604,10 @@ def user_has_seen_direct_link(user_id):
 
 async def mark_direct_link_seen(user_id):
     DIRECT_LINK_SEEN[user_id] = DIRECT_LINK_CONFIG.get("campaign_id")
-    await _save_all()
+    try:
+        await _save_all()
+    except Exception as e:
+        print(f"[storage] Failed to save direct link seen state: {e}")
 
 
 async def log_direct_link_click():
