@@ -341,7 +341,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = context.args[0].strip()
         if code.isdigit():
             if storage.get_mandatory_mode() == "duration" and not await is_subscribed(context.bot, user_id):
-                await storage.increment_user_free_converts(user_id)
+                storage.increment_user_free_converts(user_id)
             await deliver_comic(update, context, user_id, code)
             return
 
@@ -404,7 +404,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
     if code.isdigit():
         if storage.get_mandatory_mode() == "duration" and not await is_subscribed(context.bot, user_id):
-            await storage.increment_user_free_converts(user_id)
+            storage.increment_user_free_converts(user_id)
         await deliver_comic(update, context, user_id, code)
     else:
         await update.message.reply_text(
@@ -1165,8 +1165,17 @@ broadcast_conversation = ConversationHandler(
 # ── Background scheduler loop: checks every 60s for due scheduled broadcasts ──
 
 async def scheduler_loop(bot):
+    tick_count = 0
     while True:
+        tick_count += 1
         try:
+            # Flush any pending free-convert counts (Duration mode) to the
+            # Gist every ~3 minutes instead of on every single comic
+            # conversion. flush_free_converts_if_dirty() is a no-op (zero
+            # network cost) if nothing changed since the last flush.
+            if tick_count % 3 == 0:
+                await storage.flush_free_converts_if_dirty()
+
             due = storage.get_due_scheduled_broadcasts()
             for entry in due:
                 # Reuse the shared, concurrent send path instead of a duplicated

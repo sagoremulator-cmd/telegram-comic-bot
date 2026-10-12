@@ -101,6 +101,10 @@ MANDATORY_DURATION = 3  # admin-editable N, only used when MANDATORY_MODE == "du
 # {user_id: count}. Untouched / irrelevant in "normal" mode.
 USER_FREE_CONVERTS = {}
 
+# True when USER_FREE_CONVERTS has changed in memory since the last Gist
+# flush. See increment_user_free_converts / flush_free_converts_if_dirty.
+_FREE_CONVERTS_DIRTY = False
+
 
 async def load_users():
     """Fetch the current user list + all logs from the Gist into memory. Call once at startup."""
@@ -585,12 +589,36 @@ def get_user_free_converts(user_id):
     return USER_FREE_CONVERTS.get(user_id, 0)
 
 
-async def increment_user_free_converts(user_id):
+def increment_user_free_converts(user_id):
+    """
+    Pure in-memory bump — NOT async, no Gist write here on purpose.
+    This runs on every single comic conversion in Duration mode, so it has
+    to be effectively free; the actual persistence happens in batches via
+    free_converts_flush_loop() instead of once per call. A crash between
+    flushes can lose at most a few minutes of counts (worst case: a user
+    gets a few extra free comics) — a fine trade for not hammering the
+    Gist API on the hottest code path in the bot.
+    """
+    global _FREE_CONVERTS_DIRTY
     USER_FREE_CONVERTS[user_id] = USER_FREE_CONVERTS.get(user_id, 0) + 1
+    _FREE_CONVERTS_DIRTY = True
+
+
+async def flush_free_converts_if_dirty():
+    """
+    Called periodically by main.py's scheduler loop (e.g. every 2-3 min).
+    Only pushes to the Gist if something actually changed since the last
+    flush — a quiet bot does zero extra writes.
+    """
+    global _FREE_CONVERTS_DIRTY
+    if not _FREE_CONVERTS_DIRTY:
+        return
+    _FREE_CONVERTS_DIRTY = False
     try:
         await _save_all()
     except Exception as e:
-        print(f"[storage] Failed to save free-convert count: {e}")
+        print(f"[storage] Failed to flush free-convert counts: {e}")
+        _FREE_CONVERTS_DIRTY = True  # retry on the next tick
 
 
 # ── Mandatory Channels (join-to-use gate) ──
