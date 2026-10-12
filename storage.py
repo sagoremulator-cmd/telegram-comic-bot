@@ -76,16 +76,6 @@ BIG_AD_CLICKS = []
 # ── Gateway ads (GitHub landing page) frequency: every Nth comic conversion ──
 GATEWAY_FREQUENCY = 5  # admin-editable, default matches current hardcoded behavior
 
-# ── Mandatory subscription mode: "normal" (wall immediately, today's behavior)
-# or "duration" (let a new user convert N comics free before the wall appears).
-# Default is "normal" so existing/not-yet-migrated Gist data behaves EXACTLY as today.
-MANDATORY_MODE = "normal"
-MANDATORY_DURATION = 3  # admin-editable N, only used when MANDATORY_MODE == "duration"
-
-# Per-user free-conversion counter, only written to while MANDATORY_MODE == "duration".
-# {user_id: count}. Untouched / irrelevant in "normal" mode.
-USER_FREE_CONVERTS = {}
-
 # ── Direct Link ads (Adsterra/Hilltop-style direct link, one-time-per-campaign) ──
 # campaign_id changes every time the admin sets a new URL or hits Reset — this is
 # the whole mechanism for "everyone becomes eligible again" without a separate
@@ -110,12 +100,26 @@ async def load_users():
     global BIG_ADS, BIG_AD_SENDS, BIG_AD_CLICKS, GATEWAY_FREQUENCY
     global REQUIRED_CHANNELS_LIST
     global DIRECT_LINK_CONFIG, DIRECT_LINK_SEEN, DIRECT_LINK_CLICKS
-    global MANDATORY_MODE, MANDATORY_DURATION, USER_FREE_CONVERTS
     async with httpx.AsyncClient() as client:
         resp = await client.get(GITHUB_API, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-        content = data["files"][GIST_FILENAME]["content"]
+        file_info = data["files"][GIST_FILENAME]
+
+        # GitHub's Gist API truncates the inline `content` field once a file
+        # gets large enough (our users.json has crossed that line). When that
+        # happens `truncated` is true and `content` is a cut-off fragment —
+        # parsing it directly raises "Unterminated string" at the cut point.
+        # The fix: follow `raw_url` for the untruncated file instead.
+        if file_info.get("truncated"):
+            raw_resp = await client.get(file_info["raw_url"], headers=HEADERS, timeout=30)
+            raw_resp.raise_for_status()
+            content = raw_resp.text
+            print(f"[storage] Gist content was truncated by the API ({file_info.get('size')} bytes) — "
+                  f"fetched full content via raw_url instead.")
+        else:
+            content = file_info["content"]
+
         parsed = json.loads(content)
         USERS_CACHE = {int(uid): info for uid, info in parsed.get("users", {}).items()}
         GATEWAY_VIEWS = parsed.get("gateway_views", [])
@@ -134,9 +138,6 @@ async def load_users():
         DIRECT_LINK_CONFIG = parsed.get("direct_link_config", {"enabled": False, "url": "", "campaign_id": ""})
         DIRECT_LINK_SEEN = {int(uid): cid for uid, cid in parsed.get("direct_link_seen", {}).items()}
         DIRECT_LINK_CLICKS = parsed.get("direct_link_clicks", [])
-        MANDATORY_MODE = parsed.get("mandatory_mode", "normal")
-        MANDATORY_DURATION = parsed.get("mandatory_duration", 3)
-        USER_FREE_CONVERTS = {int(uid): n for uid, n in parsed.get("user_free_converts", {}).items()}
     print(f"[storage] Loaded {len(USERS_CACHE)} users, "
           f"{len(GATEWAY_VIEWS)} gateway views, {len(TEXT_AD_VIEWS)} text ad views, "
           f"{len(BROADCAST_HISTORY)} past broadcasts, {len(SCHEDULED_BROADCASTS)} scheduled, "
@@ -168,9 +169,6 @@ async def _save_all():
                     "direct_link_config": DIRECT_LINK_CONFIG,
                     "direct_link_seen": DIRECT_LINK_SEEN,
                     "direct_link_clicks": DIRECT_LINK_CLICKS,
-                    "mandatory_mode": MANDATORY_MODE,
-                    "mandatory_duration": MANDATORY_DURATION,
-                    "user_free_converts": USER_FREE_CONVERTS,
                 }, indent=2)
             }
         }
@@ -541,41 +539,6 @@ async def set_gateway_frequency(n):
 
 def get_gateway_frequency():
     return GATEWAY_FREQUENCY
-
-
-# ── Mandatory subscription mode (normal wall vs. duration-based free converts) ──
-
-def get_mandatory_mode():
-    return MANDATORY_MODE
-
-
-async def set_mandatory_mode(mode):
-    global MANDATORY_MODE
-    assert mode in ("normal", "duration")
-    MANDATORY_MODE = mode
-    await _save_all()
-
-
-def get_mandatory_duration():
-    return MANDATORY_DURATION
-
-
-async def set_mandatory_duration(n):
-    global MANDATORY_DURATION
-    MANDATORY_DURATION = n
-    await _save_all()
-
-
-def get_user_free_converts(user_id):
-    return USER_FREE_CONVERTS.get(user_id, 0)
-
-
-async def increment_user_free_converts(user_id):
-    USER_FREE_CONVERTS[user_id] = USER_FREE_CONVERTS.get(user_id, 0) + 1
-    try:
-        await _save_all()
-    except Exception as e:
-        print(f"[storage] Failed to save free-convert count: {e}")
 
 
 # ── Mandatory Channels (join-to-use gate) ──
