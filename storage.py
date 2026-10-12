@@ -104,7 +104,19 @@ async def load_users():
         resp = await client.get(GITHUB_API, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-        content = data["files"][GIST_FILENAME]["content"]
+        file_info = data["files"][GIST_FILENAME]
+
+        # GitHub's Gist API truncates "content" for large files (around ~1MB)
+        # and sets "truncated": true instead of erroring. If we trust the
+        # inline content in that case, we get cut-off JSON and a crash.
+        # When truncated, fetch the untruncated file from raw_url instead.
+        if file_info.get("truncated"):
+            raw_resp = await client.get(file_info["raw_url"], headers=HEADERS, timeout=30)
+            raw_resp.raise_for_status()
+            content = raw_resp.text
+        else:
+            content = file_info["content"]
+
         parsed = json.loads(content)
         USERS_CACHE = {int(uid): info for uid, info in parsed.get("users", {}).items()}
         GATEWAY_VIEWS = parsed.get("gateway_views", [])
