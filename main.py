@@ -205,28 +205,6 @@ async def is_subscribed(bot, user_id):
     return True
 
 
-async def wall_should_block(bot, user_id):
-    """
-    Gate used by start()/handle_message() in place of a bare is_subscribed()
-    call. Does NOT change is_subscribed() itself — purely wraps it.
-
-    - "normal" mode (default, today's behavior): blocks immediately unless
-      the user is actually subscribed. Identical to the old direct check.
-    - "duration" mode: lets a user through for free until they've used up
-      their N free conversions (storage.get_mandatory_duration()), THEN
-      falls back to the same subscription check as normal mode — i.e. once
-      their free converts are used, they're walled exactly like today,
-      permanently, until they join.
-    """
-    if storage.get_mandatory_mode() != "duration":
-        return not await is_subscribed(bot, user_id)
-
-    if storage.get_user_free_converts(user_id) < storage.get_mandatory_duration():
-        return False  # still has free converts left, let them through
-
-    return not await is_subscribed(bot, user_id)
-
-
 async def build_join_keyboard(bot, user_id):
     keyboard = []
     channels = storage.get_all_required_channels()
@@ -323,7 +301,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await storage.register_user(update.effective_user)
 
-    if await wall_should_block(context.bot, user_id):
+    if not await is_subscribed(context.bot, user_id):
         if context.args:
             PENDING_CODES[user_id] = {"code": context.args[0].strip(), "time": time.time()}
         reply_markup = await build_join_keyboard(context.bot, user_id)
@@ -340,8 +318,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         code = context.args[0].strip()
         if code.isdigit():
-            if storage.get_mandatory_mode() == "duration" and not await is_subscribed(context.bot, user_id):
-                storage.increment_user_free_converts(user_id)
             await deliver_comic(update, context, user_id, code)
             return
 
@@ -394,7 +370,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await storage.register_user(update.effective_user)
 
-    if await wall_should_block(context.bot, user_id):
+    if not await is_subscribed(context.bot, user_id):
         await update.message.reply_text(
             "❌ Access denied.\n\nYou must remain subscribed to all channels.\nUse /start to verify again.",
             protect_content=False
@@ -403,8 +379,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     code = update.message.text.strip()
     if code.isdigit():
-        if storage.get_mandatory_mode() == "duration" and not await is_subscribed(context.bot, user_id):
-            storage.increment_user_free_converts(user_id)
         await deliver_comic(update, context, user_id, code)
     else:
         await update.message.reply_text(
@@ -1165,17 +1139,8 @@ broadcast_conversation = ConversationHandler(
 # ── Background scheduler loop: checks every 60s for due scheduled broadcasts ──
 
 async def scheduler_loop(bot):
-    tick_count = 0
     while True:
-        tick_count += 1
         try:
-            # Flush any pending free-convert counts (Duration mode) to the
-            # Gist every ~3 minutes instead of on every single comic
-            # conversion. flush_free_converts_if_dirty() is a no-op (zero
-            # network cost) if nothing changed since the last flush.
-            if tick_count % 3 == 0:
-                await storage.flush_free_converts_if_dirty()
-
             due = storage.get_due_scheduled_broadcasts()
             for entry in due:
                 # Reuse the shared, concurrent send path instead of a duplicated
