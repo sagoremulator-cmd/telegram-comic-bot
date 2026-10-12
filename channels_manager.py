@@ -13,7 +13,8 @@ import storage
     CH_AWAITING_USERNAME,
     CH_AWAITING_LINK,
     CH_AWAITING_EMOJI,
-) = range(4)
+    CH_AWAITING_DURATION,
+) = range(5)
 
 
 def channels_menu_keyboard():
@@ -23,7 +24,34 @@ def channels_menu_keyboard():
         emoji = ch.get("emoji") or "📌"
         kb.append([InlineKeyboardButton(f"{emoji} {ch['display_name']}", callback_data=f"ch_view_{ch['id']}")])
     kb.append([InlineKeyboardButton("➕ Add Channel", callback_data="ch_add")])
+    kb.append([InlineKeyboardButton("⏱️ Mandatory Mode", callback_data="ch_mode_menu")])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="adm_root")])
+    return InlineKeyboardMarkup(kb)
+
+
+def mode_menu_text():
+    mode = storage.get_mandatory_mode()
+    duration = storage.get_mandatory_duration()
+    mode_label = "🔒 Normal (wall immediately)" if mode == "normal" else f"⏱️ Duration ({duration} free comics)"
+    return (
+        "⏱️ *Mandatory Subscription Mode*\n\n"
+        f"Current mode: *{mode_label}*\n\n"
+        "• *Normal* — users must join all channels before using the bot at all (today's default).\n"
+        "• *Duration* — new users can convert a set number of comics for free, "
+        "then they're walled exactly like Normal mode until they join.\n\n"
+        "Switching modes takes effect immediately and never removes your channel list."
+    )
+
+
+def mode_menu_keyboard():
+    mode = storage.get_mandatory_mode()
+    kb = []
+    if mode == "normal":
+        kb.append([InlineKeyboardButton("▶️ Switch to Duration Mode", callback_data="ch_mode_set_duration")])
+    else:
+        kb.append([InlineKeyboardButton("◀️ Switch back to Normal Mode", callback_data="ch_mode_set_normal")])
+        kb.append([InlineKeyboardButton("✏️ Edit Free-Comic Count", callback_data="ch_mode_edit_duration")])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data="ch_menu")])
     return InlineKeyboardMarkup(kb)
 
 
@@ -72,6 +100,25 @@ async def channels_router(update: Update, context: ContextTypes.DEFAULT_TYPE, ad
         await query.answer("Removed.", show_alert=False)
         await query.message.edit_text(
             "📢 *Mandatory Channels*", parse_mode="Markdown", reply_markup=channels_menu_keyboard()
+        )
+
+    elif data == "ch_mode_menu":
+        await query.message.edit_text(
+            mode_menu_text(), parse_mode="Markdown", reply_markup=mode_menu_keyboard()
+        )
+
+    elif data == "ch_mode_set_duration":
+        await storage.set_mandatory_mode("duration")
+        await query.answer("Switched to Duration mode.", show_alert=False)
+        await query.message.edit_text(
+            mode_menu_text(), parse_mode="Markdown", reply_markup=mode_menu_keyboard()
+        )
+
+    elif data == "ch_mode_set_normal":
+        await storage.set_mandatory_mode("normal")
+        await query.answer("Switched back to Normal mode.", show_alert=False)
+        await query.message.edit_text(
+            mode_menu_text(), parse_mode="Markdown", reply_markup=mode_menu_keyboard()
         )
 
 
@@ -152,9 +199,48 @@ async def ch_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def ch_mode_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await query.message.edit_text(
+        mode_menu_text(), parse_mode="Markdown", reply_markup=mode_menu_keyboard()
+    )
+    return ConversationHandler.END
+
+
+async def ch_mode_edit_duration_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    current = storage.get_mandatory_duration()
+    await query.message.edit_text(
+        f"✏️ *Edit Free-Comic Count*\n\nCurrent: *{current}* free comics before the wall.\n\n"
+        "Send the new number.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data="ch_mode_menu")]])
+    )
+    return CH_AWAITING_DURATION
+
+
+async def ch_mode_receive_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = update.message.text.strip()
+    if not raw.isdigit() or int(raw) < 1:
+        await update.message.reply_text("⚠️ Send a whole number, 1 or higher.")
+        return CH_AWAITING_DURATION
+    await storage.set_mandatory_duration(int(raw))
+    await update.message.reply_text(f"✅ Free-comic count set to {raw}.")
+    await update.message.reply_text(
+        mode_menu_text(), parse_mode="Markdown", reply_markup=mode_menu_keyboard()
+    )
+    return ConversationHandler.END
+
+
 def build_channel_conversation():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(ch_add_start, pattern="^ch_add$")],
+        entry_points=[
+            CallbackQueryHandler(ch_add_start, pattern="^ch_add$"),
+            CallbackQueryHandler(ch_mode_edit_duration_start, pattern="^ch_mode_edit_duration$"),
+        ],
         states={
             CH_AWAITING_NAME: [
                 CallbackQueryHandler(ch_cancel, pattern="^ch_menu$"),
@@ -171,6 +257,10 @@ def build_channel_conversation():
             CH_AWAITING_EMOJI: [
                 CallbackQueryHandler(ch_cancel, pattern="^ch_menu$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ch_receive_emoji),
+            ],
+            CH_AWAITING_DURATION: [
+                CallbackQueryHandler(ch_mode_cancel, pattern="^ch_mode_menu$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ch_mode_receive_duration),
             ],
         },
         fallbacks=[CallbackQueryHandler(ch_cancel, pattern="^ch_menu$")],
